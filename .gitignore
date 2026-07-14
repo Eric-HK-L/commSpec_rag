@@ -1,0 +1,108 @@
+# ==================== Python ====================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+*.whl
+
+# Virtual environments
+.env
+.envrc
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Testing
+.pytest_cache/
+.coverage
+coverage/
+htmlcov/
+.tox/
+.nox/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+.pytype/
+.pyre/
+
+# Ruff
+.ruff_cache/
+
+# ==================== Node.js ====================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.eslintcache
+*.tsbuildinfo
+
+# Next.js
+.next/
+out/
+
+# ==================== IDE ====================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Qoder IDE
+.qoder/
+
+# Cursor
+.cursorignore
+.cursorindexingignore
+
+# ==================== 项目数据（不入库） ====================
+data/raw/*
+data/processed/*
+data/vectors/*
+data/documents/*
+data/manifest/*
+data/cache/*
+data/checkpoint/*
+data/embedding_cache.db
+data/.chunks_checkpoint.pkl
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/vectors/.gitkeep
+
+# Downloaded 3GPP specification files
+*.zip
+*.doc
+*.docx
+
+# ==================== 不上传 GitHub ====================
+open_sources/
+docs/plans/
+
+# ==================== Frontend env ====================
+frontend/.env.local
+
+# ==================== Docker ====================
+docker-compose.override.yml
+
+# ==================== LLM / Models ====================
+llm_storage/
+models/
+
+# ==================== 离线部署包 (体积过大) ====================
+offline/
+!offline/.gitkeep
+
+# ==================== Logs ====================
+logs/
+*.log

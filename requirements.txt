@@ -1,0 +1,63 @@
+# ==================== 3GPP RAG 融合项目 — Python 依赖 ====================
+# 基于 5 个开源参考项目的依赖整合：
+# Chat3GPP, Telco-RAG, gpp-RAG-app, SpecPilot, 3GPP MCP Server
+
+# -------------------- Web 框架 --------------------
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.18
+
+# -------------------- LLM & RAG 框架 --------------------
+langchain==0.3.13
+langchain-openai==0.2.14
+langchain-community==0.3.13
+openai==1.58.1
+
+# -------------------- 向量数据库 --------------------
+pymilvus==2.4.10
+# Elasticsearch（可选）
+# elasticsearch==8.17.0
+
+# -------------------- 嵌入模型 --------------------
+sentence-transformers==3.3.1
+# torch — 按 CUDA 版本选择
+torch==2.5.1
+transformers==4.47.1
+
+# -------------------- 文档处理 --------------------
+docling==2.15.1
+python-docx==1.1.2
+beautifulsoup4==4.12.3
+cachetools==7.1.4
+markdown==3.7
+lxml==5.3.0
+
+# -------------------- 数据处理 --------------------
+numpy==1.26.4
+pandas==2.2.3
+tiktoken==0.8.0
+
+# -------------------- HTTP 客户端 --------------------
+requests==2.32.3
+httpx==0.28.1
+aiohttp==3.11.10
+
+# -------------------- 配置与工具 --------------------
+python-dotenv==1.0.1
+pydantic==2.10.4
+pydantic-settings==2.7.0
+python-json-logger==2.0.7
+
+# -------------------- 缓存（可选） --------------------
+# redis==5.2.1
+
+# -------------------- MCP 协议（可选） --------------------
+# mcp==1.4.1
+
+# -------------------- 监控 --------------------
+prometheus-client==0.21.1
+
+# -------------------- 测试 --------------------
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0

@@ -1,0 +1,39 @@
+# 文本文件统一 LF 换行
+* text=auto
+
+# Python
+*.py text eol=lf
+
+# 前端
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.json text eol=lf
+*.css text eol=lf
+*.mjs text eol=lf
+
+# 配置
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.ini text eol=lf
+*.cfg text eol=lf
+.env.example text eol=lf
+
+# 文档
+*.md text eol=lf
+*.txt text eol=lf
+
+# 脚本
+*.sh text eol=lf
+
+# 二进制
+*.pkl binary
+*.db binary
+*.zip binary
+*.whl binary
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary

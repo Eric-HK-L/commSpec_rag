@@ -1,0 +1,41 @@
+# Docker 构建忽略 — 减小构建上下文
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# 数据（运行时挂载）
+data/documents/
+data/vectors/
+data/manifest/
+data/processed/
+data/cache/
+data/checkpoint/
+logs/
+
+# 前端
+frontend/node_modules/
+frontend/.next/
+
+# 第三方源码（不打包进镜像）
+open_sources/
+
+# IDE
+.vscode/
+.idea/
+.qoder/
+
+# Git
+.git/
+
+# 测试与文档
+tests/
+docs/
+*.md
+!README.md
+
+# 环境
+.env
+.env.local

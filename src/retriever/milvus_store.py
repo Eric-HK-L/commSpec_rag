@@ -1,0 +1,527 @@
+"""Milvus 2.4+ 向量存储后端 — Dense 检索 + Python BM25 混合检索."""
+
+from __future__ import annotations
+
+import logging
+import os
+from typing import Any
+
+import numpy as np
+
+# ── BGE-M3 1024-dim 向量批量 insert 可能超 gRPC 64MB 默认上限, 必须在 pymilvus import 前设置 ──
+os.environ.setdefault("GRPC_MAX_RECEIVE_MESSAGE_LENGTH", str(128 * 1024 * 1024))
+os.environ.setdefault("GRPC_MAX_SEND_MESSAGE_LENGTH", str(128 * 1024 * 1024))
+
+from pymilvus import (
+    Collection,
+    CollectionSchema,
+    DataType,
+    FieldSchema,
+    MilvusException,
+    connections,
+    utility,
+)
+
+from src.config import settings
+
+from .bm25_index import BM25Indexer
+from .vector_store import Chunk, SearchResult, VectorStore
+
+logger = logging.getLogger(__name__)
+
+# Milvus 字段配置
+VARCHAR_MAX = 65000  # 字节级安全边距 (Milvus VARCHAR 硬限 65535 bytes)
+
+
+def _safe_truncate_bytes(text: str, max_bytes: int) -> str:
+    """按字节数安全截断，不在多字节 UTF-8 字符中间切断。"""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    # 截断后解码，errors='ignore' 丢弃被切断的不完整字节
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+
+def _escape_milvus_expr(value: str) -> str:
+    """转义 Milvus 表达式中的单引号，防止查询注入。"""
+    return value.replace("'", "''")
+
+
+class MilvusStore(VectorStore):
+    """Milvus 2.4+ 向量数据库 — Dense + Python BM25 混合检索."""
+
+    def __init__(
+        self,
+        host: str = "localhost",
+        port: int = 19530,
+        collection_name: str = "TeleComm_specs",
+        alias: str = "default",
+        bm25_index_path: str | Path | None = None,
+    ):
+        self._host = host
+        self._port = port
+        self._collection_name = collection_name
+        self._alias = alias
+        self._collection: Collection | None = None
+        self._connected = False
+        self._bm25 = BM25Indexer(bm25_index_path) if bm25_index_path else BM25Indexer()
+
+    # ── 连接管理 ──
+
+    def connect(self) -> None:
+        """连接到 Milvus 服务."""
+        if self._connected:
+            return
+        try:
+            connections.connect(
+                alias=self._alias,
+                host=self._host,
+                port=self._port,
+            )
+            self._connected = True
+            logger.info("Milvus 连接成功: %s:%d", self._host, self._port)
+        except MilvusException as e:
+            logger.error("Milvus 连接失败: %s", e)
+            raise
+
+    def disconnect(self) -> None:
+        """断开 Milvus 连接."""
+        if self._connected:
+            connections.disconnect(self._alias)
+            self._connected = False
+            self._collection = None
+
+    # ── 集合管理 ──
+
+    def create_collection(self, drop_existing: bool = False) -> None:
+        """创建 3GPP 规范检索集合."""
+        self._ensure_connected()
+
+        if drop_existing and utility.has_collection(self._collection_name):
+            utility.drop_collection(self._collection_name)
+            logger.info("已删除旧集合: %s", self._collection_name)
+
+        if utility.has_collection(self._collection_name):
+            logger.info("集合已存在: %s", self._collection_name)
+            self._collection = Collection(self._collection_name)
+            self._collection.load()
+            return
+
+        # 定义字段 (Dense-only, BM25 待后续启用)
+        fields = [
+            FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
+            FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=VARCHAR_MAX),
+            FieldSchema(
+                name="dense_vector",
+                dtype=DataType.FLOAT_VECTOR,
+                dim=settings.embedding_dimension,
+            ),
+            FieldSchema(name="doc_id", dtype=DataType.VARCHAR, max_length=256),
+            FieldSchema(name="series", dtype=DataType.INT64),
+            FieldSchema(name="spec_number", dtype=DataType.VARCHAR, max_length=64),
+            FieldSchema(name="release", dtype=DataType.VARCHAR, max_length=32),
+            FieldSchema(name="parent_section_id", dtype=DataType.VARCHAR, max_length=256),
+            FieldSchema(name="parent_title", dtype=DataType.VARCHAR, max_length=1024),
+            FieldSchema(name="chunk_index", dtype=DataType.INT64),
+        ]
+
+        schema = CollectionSchema(fields, description="3GPP 规范检索集合 (Dense)")
+        self._collection = Collection(self._collection_name, schema)
+
+        # 创建 Dense 向量索引
+        index_params = {
+            "index_type": "IVF_FLAT",
+            "metric_type": "COSINE",
+            "params": {"nlist": 1024},
+        }
+        self._collection.create_index(
+            field_name="dense_vector", index_params=index_params
+        )
+
+        self._collection.load()
+        logger.info(
+            "集合创建成功: %s (dense=%ddim)", self._collection_name, settings.embedding_dimension
+        )
+
+    def _ensure_connected(self) -> None:
+        if not self._connected:
+            self.connect()
+        if self._collection is None and utility.has_collection(self._collection_name):
+            self._collection = Collection(self._collection_name)
+
+    # ── 数据操作 ──
+
+    def insert(self, chunks: list[Chunk]) -> int:
+        """批量插入文档 chunk."""
+        self._ensure_connected()
+        if not chunks:
+            return 0
+
+        if self._collection is None:
+            raise RuntimeError("集合未初始化，请先调用 create_collection()")
+
+        # 构建插入数据
+        data: list[list[Any]] = [
+            [],  # text
+            [],  # dense_vector
+            [],  # doc_id
+            [],  # series
+            [],  # spec_number
+            [],  # release
+            [],  # parent_section_id
+            [],  # parent_title
+            [],  # chunk_index
+        ]
+
+        for c in chunks:
+            data[0].append(_safe_truncate_bytes(c.text, VARCHAR_MAX))
+            vec = c.embedding if c.embedding is not None else np.zeros(settings.embedding_dimension, dtype=np.float32)
+            data[1].append(vec.astype(np.float32).tolist())
+            data[2].append(c.doc_id[:256] if c.doc_id else "")
+            data[3].append(c.series)
+            data[4].append(c.spec_number[:64] if c.spec_number else "")
+            data[5].append(c.release[:32] if c.release else "")
+            data[6].append(c.parent_section_id[:256] if c.parent_section_id else "")
+            data[7].append(c.parent_title[:1024] if c.parent_title else "")
+            data[8].append(c.chunk_index)
+
+        try:
+            self._collection.insert(data)
+            self._collection.flush()
+            inserted = len(chunks)
+            logger.debug("插入 %d 条记录", inserted)
+            return inserted
+        except MilvusException as e:
+            logger.error("插入失败: %s", e)
+            raise
+
+    def delete_by_filter(self, filter_expr: str) -> int:
+        """按过滤条件删除."""
+        self._ensure_connected()
+        if self._collection is None:
+            return 0
+        try:
+            result = self._collection.delete(filter_expr)
+            return result.delete_count if hasattr(result, "delete_count") else 0
+        except MilvusException as e:
+            logger.error("删除失败: %s", e)
+            return 0
+
+    # ── BM25 索引管理 ──
+
+    def build_bm25(
+        self,
+        texts: list[str],
+        doc_ids: list[str],
+        spec_numbers: list[str],
+        chunk_indices: list[int],
+    ) -> None:
+        """从完整语料构建 BM25 索引。"""
+        self._bm25.build(texts, doc_ids, spec_numbers, chunk_indices)
+        self._bm25.save()
+
+    def rebuild_bm25_from_collection(self) -> int:
+        """从当前 Milvus collection 读取全部 texts 重建 BM25 索引.
+
+        用于增量摄入后刷新混合检索能力.
+
+        Returns:
+            重建的文档数.
+        """
+        self._ensure_connected()
+        if self._collection is None:
+            return 0
+
+        try:
+            results = self._collection.query(
+                expr="id >= 0",
+                output_fields=["text", "doc_id", "spec_number", "chunk_index"],
+                limit=300000,
+            )
+        except MilvusException as e:
+            logger.error("BM25 重建查询失败: %s", e)
+            return 0
+
+        if not results:
+            return 0
+
+        texts = [str(r.get("text", "")) for r in results]
+        doc_ids = [str(r.get("doc_id", "")) for r in results]
+        spec_numbers = [str(r.get("spec_number", "")) for r in results]
+        chunk_indices = [int(r.get("chunk_index", 0)) for r in results]
+
+        self.build_bm25(texts, doc_ids, spec_numbers, chunk_indices)
+        logger.info("BM25 索引已从 collection 重建 (%d 条)", len(texts))
+        return len(texts)
+
+    def load_bm25(self) -> bool:
+        """从磁盘加载 BM25 索引。"""
+        return self._bm25.load()
+
+    @property
+    def bm25_count(self) -> int:
+        return self._bm25.doc_count
+
+    # ── 检索 ──
+
+    def search_dense(
+        self, query_embedding: np.ndarray, top_k: int = 100
+    ) -> list[SearchResult]:
+        """Dense 向量相似度检索."""
+        self._ensure_connected()
+        if self._collection is None:
+            return []
+
+        query_vec = query_embedding.astype(np.float32).reshape(1, -1)
+
+        search_params = {"metric_type": "COSINE", "params": {"nprobe": 32}}
+        results = self._collection.search(
+            data=query_vec.tolist(),
+            anns_field="dense_vector",
+            param=search_params,
+            limit=top_k,
+            output_fields=[
+                "text", "doc_id", "series", "spec_number",
+                "release", "parent_section_id", "parent_title", "chunk_index",
+            ],
+        )
+
+        output: list[SearchResult] = []
+        for hits in results:
+            for hit in hits:
+                entity = hit.entity
+                output.append(SearchResult(
+                    chunk_id=hit.id,
+                    text=entity.get("text", ""),
+                    score=float(hit.distance),
+                    doc_id=entity.get("doc_id", ""),
+                    series=entity.get("series", 0),
+                    spec_number=entity.get("spec_number", ""),
+                    release=entity.get("release", ""),
+                    parent_section_id=entity.get("parent_section_id", ""),
+                    parent_title=entity.get("parent_title", ""),
+                    chunk_index=entity.get("chunk_index", 0),
+                ))
+        return output
+
+    def search_sparse(
+        self, query_text: str, top_k: int = 100
+    ) -> list[SearchResult]:
+        """BM25 稀疏检索 (Python rank-bm25)."""
+        self._ensure_connected()
+        if not self._bm25.is_loaded:
+            logger.warning("BM25 索引未加载")
+            return []
+
+        bm25_results = self._bm25.search(query_text, top_k)
+
+        output: list[SearchResult] = []
+        for doc_key, score, text in bm25_results:
+            # 解析 doc_key: "doc_id|spec_number|chunk_index"
+            parts = doc_key.split("|", 2)
+            doc_id = parts[0] if len(parts) > 0 else ""
+            spec_number = parts[1] if len(parts) > 1 else ""
+            chunk_index = int(parts[2]) if len(parts) > 2 else 0
+            output.append(SearchResult(
+                chunk_id=doc_key,
+                text=text,
+                score=score,
+                doc_id=doc_id,
+                spec_number=spec_number,
+                chunk_index=chunk_index,
+            ))
+        return output
+
+    def hybrid_search(
+        self,
+        query_embedding: np.ndarray,
+        query_text: str,
+        dense_top_k: int = 100,
+        sparse_top_k: int = 100,
+        final_top_k: int = 10,
+    ) -> list[SearchResult]:
+        """Dense + BM25 混合检索，Python 侧 RRF 融合。"""
+        self._ensure_connected()
+        if self._collection is None:
+            return []
+
+        # 1. Dense 检索 (Milvus)
+        dense_results = self.search_dense(query_embedding, dense_top_k)
+
+        # 2. BM25 检索 (Python)
+        sparse_results = self.search_sparse(query_text, sparse_top_k)
+
+        if not sparse_results:
+            # BM25 不可用时降级为纯 Dense
+            return dense_results[:final_top_k]
+
+        # 3. RRF 融合
+        fused = self._rrf_fuse(dense_results, sparse_results, final_top_k)
+        return fused
+
+    @staticmethod
+    def _make_key(result: SearchResult) -> str:
+        """生成文档唯一键: doc_id|spec_number|chunk_index."""
+        return f"{result.doc_id}|{result.spec_number}|{result.chunk_index}"
+
+    @staticmethod
+    def _rrf_fuse(
+        dense: list[SearchResult],
+        sparse: list[SearchResult],
+        final_top_k: int,
+        k: int = 60,
+    ) -> list[SearchResult]:
+        """RRF (Reciprocal Rank Fusion) 融合 Dense + BM25 结果.
+
+        RRF(d) = sum_{r in rankings} 1 / (k + rank(d, r))
+        """
+        # 建立 dense 排名表: doc_key -> rank (1-based)
+        dense_rank: dict[str, int] = {}
+        for i, r in enumerate(dense):
+            key = MilvusStore._make_key(r)
+            if key not in dense_rank:
+                dense_rank[key] = i + 1
+
+        # 建立 sparse 排名表
+        sparse_rank: dict[str, int] = {}
+        sparse_map: dict[str, SearchResult] = {}
+        for i, r in enumerate(sparse):
+            key = MilvusStore._make_key(r)
+            if key not in sparse_rank:
+                sparse_rank[key] = i + 1
+            sparse_map[key] = r
+
+        # 合并所有 keys
+        all_keys = set(dense_rank.keys()) | set(sparse_rank.keys())
+
+        # 计算 RRF 分数
+        rrf_scores: dict[str, float] = {}
+        for key in all_keys:
+            rrf = 0.0
+            if key in dense_rank:
+                rrf += 1.0 / (k + dense_rank[key])
+            if key in sparse_rank:
+                rrf += 1.0 / (k + sparse_rank[key])
+            rrf_scores[key] = rrf
+
+        # 按 RRF 分数排序
+        sorted_keys = sorted(rrf_scores, key=rrf_scores.get, reverse=True)[:final_top_k]
+
+        # 构建结果：优先使用 Dense 结果的完整元数据
+        dense_map: dict[str, SearchResult] = {}
+        for r in dense:
+            key = MilvusStore._make_key(r)
+            if key not in dense_map:
+                dense_map[key] = r
+
+        results: list[SearchResult] = []
+        for key in sorted_keys:
+            if key in dense_map:
+                r = dense_map[key]
+                results.append(SearchResult(
+                    chunk_id=r.chunk_id,
+                    text=r.text,
+                    score=rrf_scores[key],
+                    doc_id=r.doc_id,
+                    series=r.series,
+                    spec_number=r.spec_number,
+                    release=r.release,
+                    parent_section_id=r.parent_section_id,
+                    parent_title=r.parent_title,
+                    chunk_index=r.chunk_index,
+                ))
+            elif key in sparse_map:
+                r = sparse_map[key]
+                results.append(SearchResult(
+                    chunk_id=r.chunk_id,
+                    text=r.text,
+                    score=rrf_scores[key],
+                    doc_id=r.doc_id,
+                    spec_number=r.spec_number,
+                    chunk_index=r.chunk_index,
+                    series=r.series,
+                ))
+
+        return results
+
+    # ── 属性 ──
+
+    @property
+    def count(self) -> int:
+        self._ensure_connected()
+        if self._collection is None:
+            return 0
+        try:
+            return self._collection.num_entities
+        except MilvusException:
+            return 0
+
+    @property
+    def supports_bm25(self) -> bool:
+        return self._bm25.is_loaded
+
+    # ── 文档管理 (适配 REST API) ──
+
+    def get_documents_summary(self) -> dict[str, dict]:
+        """查询 Milvus 获取文档摘要 Map (按 doc_id 聚合).
+
+        Returns:
+            {doc_id: {doc_id, spec_number, release, title, series, chunk_count}}
+        """
+        self._ensure_connected()
+        if self._collection is None:
+            return {}
+
+        try:
+            results = self._collection.query(
+                expr="id >= 0",
+                output_fields=["doc_id", "spec_number", "release", "series", "parent_title"],
+                limit=300000,
+            )
+        except MilvusException as e:
+            logger.error("查询文档摘要失败: %s", e)
+            return {}
+
+        doc_map: dict[str, dict] = {}
+        for r in results:
+            doc_id = str(r.get("doc_id", ""))
+            if not doc_id:
+                continue
+            if doc_id not in doc_map:
+                doc_map[doc_id] = {
+                    "doc_id": doc_id,
+                    "spec_number": str(r.get("spec_number", "")),
+                    "release": str(r.get("release", "")),
+                    "title": str(r.get("parent_title", "")),
+                    "series": int(r.get("series", 0)),
+                    "chunk_count": 0,
+                }
+            doc_map[doc_id]["chunk_count"] += 1
+
+        return doc_map
+
+    def get_document_chunks(self, doc_id: str) -> list[dict]:
+        """查询指定文档的所有 chunks (排序).
+
+        Args:
+            doc_id: 文档标识符.
+
+        Returns:
+            按 chunk_index 排序的 chunk 列表.
+        """
+        self._ensure_connected()
+        if self._collection is None:
+            return []
+
+        try:
+            results = self._collection.query(
+                expr=f"doc_id == '{_escape_milvus_expr(doc_id)}'",
+                output_fields=["text", "spec_number", "release", "series",
+                               "parent_section_id", "parent_title", "chunk_index"],
+                limit=10000,
+            )
+        except MilvusException as e:
+            logger.error("查询文档 chunks 失败 (%s): %s", doc_id, e)
+            return []
+
+        return sorted(results, key=lambda r: int(r.get("chunk_index", 0)))
