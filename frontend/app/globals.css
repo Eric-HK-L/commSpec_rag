@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+/* ── Tailwind v4 class-based 暗色模式 ── */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* ── 全局基础样式 ── */
+body {
+  @apply bg-gray-50 text-gray-900 transition-colors;
+}
+
+.dark body {
+  @apply bg-gray-950 text-gray-100;
+}
+
+/* ── 滚动条美化 ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { @apply bg-gray-300 rounded-full; }
+.dark ::-webkit-scrollbar-thumb { @apply bg-gray-700; }
