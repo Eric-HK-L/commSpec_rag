@@ -243,10 +243,10 @@ def resolve_cross_refs(
 
     # 4. 合并：原始 → 补充（去重）
     merged = list(chunks)
-    seen_ids = {c.chunk_id for c in merged}
+    seen_ids = {str(c.chunk_id) for c in merged}  # 统一 str 避免 int/str 混合
     for r in supplement:
-        if r.chunk_id not in seen_ids:
-            seen_ids.add(r.chunk_id)
+        if str(r.chunk_id) not in seen_ids:
+            seen_ids.add(str(r.chunk_id))
             merged.append(r)
 
     return merged

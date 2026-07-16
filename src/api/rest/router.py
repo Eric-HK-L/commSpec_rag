@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections import defaultdict
 
 from fastapi import APIRouter, HTTPException, Query
@@ -48,6 +49,7 @@ class AskRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000)
     top_k: int = Field(default=10, ge=1, le=50)
     release: str | None = Field(default=None, description="Release 过滤, 如 'R18'")
+    reranker_enabled: bool = Field(default=True, description="是否启用 Cross-Encoder 精排 (质量优先, 关闭可提速)")
 
 
 class SearchRequest(BaseModel):
@@ -129,7 +131,7 @@ async def search_endpoint(req: SearchRequest) -> APIResponse[SearchResponse]:
 async def ask_endpoint(req: AskRequest) -> AskResponse:
     pipeline = get_pipeline()
     try:
-        response = pipeline.ask(req.query)
+        response = pipeline.ask(req.query, reranker_enabled=req.reranker_enabled)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"生成失败: {e}")
     return AskResponse(
@@ -342,7 +344,7 @@ async def ask_stream_endpoint(req: AskRequest):
         t0 = time.time()
         try:
             # 走完整 Pipeline (检索+扩展+交叉引用+多跳+验证+生成)
-            response = pipeline.ask(req.query)
+            response = pipeline.ask(req.query, reranker_enabled=req.reranker_enabled)
 
             # 1. 推送 sources (来自完整 Pipeline 的检索结果)
             sources_data = [

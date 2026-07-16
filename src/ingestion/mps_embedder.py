@@ -8,9 +8,10 @@
    这是 Apple Metal 框架层面的限制, 与 Python multiprocessing 无关。
    → workers 必须 = 1。
 
-2. MPS 无 empty_cache() (torch.mps.empty_cache() 不存在):
-   统一内存架构下 GPU 缓存无法主动释放, 单进程长时间嵌入导致
-   内存单向增长直至 OOM。
+2. MPS empty_cache() 释放不彻底 (PyTorch ≥2.0 已支持, 但只回收 Metal
+   命令缓冲区, 不保证立即回收统一内存):
+   统一内存架构下 GPU 缓存回收策略与 CUDA 不同, 单进程长时间嵌入仍可能
+   内存单向增长。
    → 单 worker 用 chunks_per_worker 控制生命周期, 定期退出让 OS 回收。
 
 === 本模块方案 ===

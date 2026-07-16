@@ -27,7 +27,7 @@ class HardwareInfo:
     gpu_memory_mb: int         # CUDA: actual VRAM; MPS: 0 (unified memory not separately reported)
     recommended_device: str    # composite recommendation: "cuda" > "cpu" > "mps"(warned)
     is_unified_memory: bool    # Apple Silicon: unified memory architecture
-    mps_known_issues: bool     # MPS: no empty_cache + memory not released
+    mps_known_issues: bool     # MPS: empty_cache 释放不彻底 + 统一内存回收策略差异
 
 
 # ── 硬件检测缓存 ──
@@ -128,9 +128,8 @@ def get_hardware_info() -> HardwareInfo:
     )
     if _mps_issues:
         logger.warning(
-            "检测到 Apple MPS GPU — 注意: MPS 不支持 torch.mps.empty_cache(), "
-            "统一内存架构下大批量嵌入会导致内存累积不释放。"
-            "推荐 EMBEDDING_DEVICE=cpu 处理 >1000 chunks。"
+            "检测到 Apple MPS GPU — 注意: MPS empty_cache() 只释放 Metal 命令缓冲区,"
+            "不保证立即回收统一内存。大批量嵌入推荐 EMBEDDING_DEVICE=cpu。"
         )
 
     return _hardware_info

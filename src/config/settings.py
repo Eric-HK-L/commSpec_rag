@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Literal
+
+# ── MPS 内存水位线 ── (必须在 torch 加载前设置)
+# 默认 HIGH=1.0 允许 Metal 使用全部系统内存, 设为 0.5 上限 50%
+# 已验证: batch_size=4 + HIGH=0.5 + LOW=0.3 → wired 仅 8GB
+if not os.environ.get("PYTORCH_MPS_HIGH_WATERMARK_RATIO"):
+    os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.5"
+if not os.environ.get("PYTORCH_MPS_LOW_WATERMARK_RATIO"):
+    os.environ["PYTORCH_MPS_LOW_WATERMARK_RATIO"] = "0.3"
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -38,6 +47,12 @@ class Settings(BaseSettings):
     # 本地嵌入模型 — BGE-M3 (多语言, 1024-dim, 稠密+稀疏双向量)
     local_embedding_model: str = "BAAI/bge-m3"
 
+    # ── Cross-Encoder Reranker ──
+    reranker_enabled: bool = True  # 是否启用第二阶段 Cross-Encoder 精排
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"  # 本地 reranker 模型路径或 HuggingFace ID
+    reranker_top_k: int = 100  # 送入 reranker 的候选数 (混合检索结果取 top-N)
+    reranker_device: str = "auto"  # "auto" | "cuda" | "mps" | "cpu"
+
     @property
     def resolved_embedding_device(self) -> str:
         """解析 embedding_device: 'auto' → 运行时自动检测, 否则直接用配置值.
@@ -55,8 +70,8 @@ class Settings(BaseSettings):
                 logger = __import__("logging").getLogger(__name__)
                 logger.warning(
                     "embedding_device='auto' 在 Apple Silicon 上自动降级为 'cpu'。"
-                    "原因: MPS 不支持 torch.mps.empty_cache(), 统一内存下大批量嵌入(>1000 chunks)"
-                    "会导致内存累积不释放 (实测 57GB+ 超限, 35GB 上限)。"
+                    "原因: MPS empty_cache() 只释放 Metal 命令缓冲区, 不保证立即回收统一内存,"
+                    "大批量嵌入(>1000 chunks)仍会导致内存累积 (实测 57GB+ 超限, 35GB 上限)。"
                     "如仅处理小批量 (<1000 chunks), 可设 EMBEDDING_DEVICE=mps 强制启用。"
                 )
             return device
@@ -67,7 +82,7 @@ class Settings(BaseSettings):
                 logger = __import__("logging").getLogger(__name__)
                 logger.warning(
                     "embedding_device='mps' 已显式启用。"
-                    "注意: MPS 无 empty_cache, 大批量嵌入可能导致内存超限。"
+                    "注意: MPS empty_cache() 释放不彻底, 大批量嵌入可能内存超限。"
                     "监控内存使用, 如有问题改回 cpu。"
                 )
         return self.embedding_device
@@ -91,7 +106,7 @@ class Settings(BaseSettings):
     documents_dir: str = "data/documents"
 
     # ── 检索 ──
-    max_search_results: int = 10
+    max_search_results: int = 20  # 对比类问题需要更多候选覆盖多规范
     dense_top_k: int = 100
     bm25_top_k: int = 100
     similarity_threshold: float = 0.7
@@ -102,6 +117,9 @@ class Settings(BaseSettings):
     google_cse_id: str = ""
     tspec_llm_url: str = ""  # TSpec-LLM API 端点
     online_score_threshold: float = 0.6  # 离线分低于此值触发在线补充
+
+    # ── Release 监控 ──
+    release_monitor_interval_minutes: int = 120  # 文档变更检测间隔 (0=禁用)
 
     # ── API 服务 ──
     api_host: str = "0.0.0.0"

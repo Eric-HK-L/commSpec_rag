@@ -16,9 +16,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`} suppressHydrationWarning>
-      <body className="min-h-full flex flex-col">
+      <body className="h-full flex flex-col">
         <ThemeProvider>
-          <nav className="sticky top-0 z-50 bg-white/80 dark:bg-gray-900/80 backdrop-blur border-b border-gray-200 dark:border-gray-800 px-6 py-3 flex items-center justify-between transition-colors">
+          <nav className="shrink-0 top-0 z-50 bg-white/80 dark:bg-gray-900/80 backdrop-blur border-b border-gray-200 dark:border-gray-800 px-6 py-3 flex items-center justify-between transition-colors">
             <Link href="/" className="flex items-center gap-2.5 group select-none">
               <span className="flex-shrink-0 w-8 h-8 rounded-lg bg-blue-600 dark:bg-blue-500
                                flex items-center justify-center
@@ -40,7 +40,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </Link>
             <ThemeToggle />
           </nav>
-          <main className="flex-1">{children}</main>
+          <main className="flex-1 overflow-hidden">{children}</main>
         </ThemeProvider>
       </body>
     </html>

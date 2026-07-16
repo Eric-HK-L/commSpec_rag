@@ -17,6 +17,7 @@ from typing import Callable
 
 from src.config import settings
 from src.ingestion.embedder import BatchEmbedder
+from src.ingestion.embedding_cache import EmbeddingCache
 from src.ingestion.extractor import DoclingExtractor, ExtractionResult
 from src.ingestion.splitter import HeaderAwareSplitter
 from src.retriever.vector_store import Chunk, VectorStore
@@ -31,6 +32,8 @@ class IngestionStats:
     docs_success: int = 0
     chunks_total: int = 0
     chunks_inserted: int = 0
+    cache_hits: int = 0
+    cache_total: int = 0
     elapsed_seconds: float = 0.0
     errors: list[str] = field(default_factory=list)
 
@@ -128,15 +131,28 @@ class IngestionOrchestrator:
             chunks = self._load_chunks_interim(search_dir.name)
             stats.chunks_total = len(chunks)
 
-        # Step 5: 嵌入
+        # Step 5: 嵌入 (含 SQLite 双层缓存)
         if not self._skip["embed"] and chunks:
             self._notify("embed", "running")
-            embedder = BatchEmbedder(cache_dir=str(settings.data_abs_dir / "cache" / "embeddings"))
+            sqlite_cache = EmbeddingCache()
+            cache_stats_before = sqlite_cache.stats()
+            embedder = BatchEmbedder(
+                cache_dir=str(settings.data_abs_dir / "cache" / "embeddings"),
+                sqlite_cache=sqlite_cache,
+            )
             texts = [c.text for c in chunks]
             embeddings = embedder.embed_batch(texts)
 
             for c, emb in zip(chunks, embeddings):
                 c.embedding = emb
+
+            cache_stats_after = sqlite_cache.stats()
+            stats.cache_hits = cache_stats_after["total_entries"] - cache_stats_before["total_entries"]
+            stats.cache_total = cache_stats_after["total_entries"]
+            logger.info(
+                "嵌入缓存: 新增 %d 条, 总计 %d 条 (%.1f MB)",
+                stats.cache_hits, stats.cache_total, cache_stats_after["size_mb"],
+            )
             self._notify("embed", "completed")
 
         # Step 6: 入库

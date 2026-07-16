@@ -398,9 +398,9 @@ LLM_MODEL=company-model-name                         # 模型名
 
 ```bash
 # 创建 Docker volumes
-docker volume create deploy_etcd_data
-docker volume create deploy_minio_data
-docker volume create deploy_milvus_data
+docker volume create spec_rag_etcd_data
+docker volume create spec_rag_minio_data
+docker volume create spec_rag_milvus_data
 
 # 启动 etcd + MinIO + Milvus
 docker compose -f deploy/docker-compose.yml up -d etcd minio milvus
@@ -412,9 +412,9 @@ docker compose -f deploy/docker-compose.yml ps
 **预期输出**：
 ```
 NAME                     STATUS                    PORTS
-deploy-etcd-1            Up (healthy)              ...
-deploy-minio-1           Up (healthy)              0.0.0.0:9000-9001->9000-9001/tcp
-deploy-milvus-1          Up (healthy)              0.0.0.0:19530->19530/tcp, 0.0.0.0:9091->9091/tcp
+spec_rag-etcd-1            Up (healthy)              ...
+spec_rag-minio-1           Up (healthy)              0.0.0.0:9000-9001->9000-9001/tcp
+spec_rag-milvus-1          Up (healthy)              0.0.0.0:19530->19530/tcp, 0.0.0.0:9091->9091/tcp
 ```
 
 ### 6.3 验证 Milvus 连接
@@ -540,7 +540,7 @@ python -m src.main &
 tail -f logs/app.log
 
 # Milvus 日志
-docker logs -f deploy-milvus-1
+docker logs -f spec_rag-milvus-1
 
 # Docker 状态
 docker compose -f deploy/docker-compose.yml ps
@@ -584,7 +584,7 @@ docker load -i offline/docker/linux-arm64/*.tar    # GB10
 ### A.3 Milvus 健康检查失败
 
 ```
-deploy-milvus-1  Up (health: starting) 或 unhealthy
+spec_rag-milvus-1  Up (health: starting) 或 unhealthy
 ```
 
 **排查步骤**：
@@ -594,14 +594,14 @@ deploy-milvus-1  Up (health: starting) 或 unhealthy
 docker compose -f deploy/docker-compose.yml ps
 
 # 2. 查看 Milvus 日志
-docker logs deploy-milvus-1 --tail 50
+docker logs spec_rag-milvus-1 --tail 50
 
 # 3. 如果持续 unhealthy, 重建
 docker compose -f deploy/docker-compose.yml down -v
-docker volume rm deploy_etcd_data deploy_minio_data deploy_milvus_data
-docker volume create deploy_etcd_data
-docker volume create deploy_minio_data
-docker volume create deploy_milvus_data
+docker volume rm spec_rag_etcd_data spec_rag_minio_data spec_rag_milvus_data
+docker volume create spec_rag_etcd_data
+docker volume create spec_rag_minio_data
+docker volume create spec_rag_milvus_data
 docker compose -f deploy/docker-compose.yml up -d etcd minio milvus
 ```
 

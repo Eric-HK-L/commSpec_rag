@@ -9,8 +9,8 @@ from typing import Any
 import numpy as np
 
 # ── BGE-M3 1024-dim 向量批量 insert 可能超 gRPC 64MB 默认上限, 必须在 pymilvus import 前设置 ──
-os.environ.setdefault("GRPC_MAX_RECEIVE_MESSAGE_LENGTH", str(128 * 1024 * 1024))
-os.environ.setdefault("GRPC_MAX_SEND_MESSAGE_LENGTH", str(128 * 1024 * 1024))
+os.environ["GRPC_DEFAULT_MAX_RECEIVE_MESSAGE_LENGTH"] = str(256 * 1024 * 1024)
+os.environ["GRPC_DEFAULT_MAX_SEND_MESSAGE_LENGTH"] = str(256 * 1024 * 1024)
 
 from pymilvus import (
     Collection,
@@ -34,12 +34,49 @@ VARCHAR_MAX = 65000  # 字节级安全边距 (Milvus VARCHAR 硬限 65535 bytes)
 
 
 def _safe_truncate_bytes(text: str, max_bytes: int) -> str:
-    """按字节数安全截断，不在多字节 UTF-8 字符中间切断。"""
+    """按字节数智能截断 — 在语义边界切断, 保留完整语义单元。
+
+    3GPP 文档场景: 正常流程 splitter 已保证 ≤ max_chunk_bytes (55KB),
+    本函数仅作为 Milvus VARCHAR 65535 硬限制的最后兜底。
+
+    截断优先级: 段落 → 行 → 句 → 分句 → 词 → 字符
+    若截断发生, 附加 "…" 标记并记录 warning 日志。
+    """
     encoded = text.encode("utf-8")
     if len(encoded) <= max_bytes:
         return text
-    # 截断后解码，errors='ignore' 丢弃被切断的不完整字节
-    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+    # 预留 "…" 标记 3 字节
+    limit = max_bytes - 3
+    truncated = encoded[:limit].decode("utf-8", errors="ignore")
+
+    # 语义边界优先级: (分隔符, 最早可接受位置比例)
+    candidates: list[tuple[str, float]] = [
+        ("\n\n", 0.3),   # 段落末尾 — 最优
+        ("\n", 0.4),     # 行末
+        (". ", 0.5),     # 英文句末
+        ("。", 0.5),     # 中文句末
+        ("; ", 0.6),     # 分句
+        ("\n", 0.2),     # 行末 (放宽位置限制)
+        (" ", 0.7),      # 词边界
+    ]
+
+    for sep, min_ratio in candidates:
+        pos = truncated.rfind(sep)
+        if pos >= int(len(truncated) * min_ratio):
+            result = truncated[:pos].rstrip() + "…"
+            logger.warning(
+                "文本截断: %dB → %dB (在 %r 边界, 丢失 %.0f%%)",
+                len(encoded),
+                len(result.encode("utf-8")),
+                sep,
+                (1 - len(result.encode("utf-8")) / len(encoded)) * 100,
+            )
+            return result
+
+    # 最后手段: 干净 UTF-8 切断
+    logger.warning("文本硬截断: %dB → %dB (无合适语义边界)", len(encoded), max_bytes)
+    return truncated + "…"
 
 
 def _escape_milvus_expr(value: str) -> str:
@@ -77,9 +114,17 @@ class MilvusStore(VectorStore):
                 alias=self._alias,
                 host=self._host,
                 port=self._port,
+                grpc_max_receive_message_length=256 * 1024 * 1024,
+                grpc_max_send_message_length=256 * 1024 * 1024,
             )
             self._connected = True
             logger.info("Milvus 连接成功: %s:%d", self._host, self._port)
+
+            # 自动加载 BM25 索引
+            if self._bm25.load():
+                logger.info("BM25 索引已加载: %d 条", self._bm25.doc_count)
+            else:
+                logger.warning("BM25 索引未找到或加载失败, 将降级为纯 Dense 检索")
         except MilvusException as e:
             logger.error("Milvus 连接失败: %s", e)
             raise
@@ -148,11 +193,17 @@ class MilvusStore(VectorStore):
             self.connect()
         if self._collection is None and utility.has_collection(self._collection_name):
             self._collection = Collection(self._collection_name)
+            self._collection.load()  # 必须 load, 否则 expr 标量过滤返回空
 
     # ── 数据操作 ──
 
+    # BGE-M3 1024-dim 向量 + 3GPP 长文本 (ASN.1 可达 60KB/chunk):
+    # 5000 chunks 最坏消息体 ≈ 332 MB > gRPC 任何合理上限
+    # → 内部按 MAX_INSERT_BATCH 微批次插入, 根治 gRPC 超限
+    MAX_INSERT_BATCH = 1000
+
     def insert(self, chunks: list[Chunk]) -> int:
-        """批量插入文档 chunk."""
+        """批量插入文档 chunk (内部微批次, 防止 gRPC 消息超限)."""
         self._ensure_connected()
         if not chunks:
             return 0
@@ -160,7 +211,24 @@ class MilvusStore(VectorStore):
         if self._collection is None:
             raise RuntimeError("集合未初始化，请先调用 create_collection()")
 
-        # 构建插入数据
+        total_inserted = 0
+
+        for batch_start in range(0, len(chunks), self.MAX_INSERT_BATCH):
+            batch = chunks[batch_start : batch_start + self.MAX_INSERT_BATCH]
+            try:
+                n = self._insert_batch(batch)
+                total_inserted += n
+            except MilvusException:
+                logger.error(
+                    "微批次插入失败 (offset=%d, size=%d), 已插入 %d 条",
+                    batch_start, len(batch), total_inserted,
+                )
+                raise
+
+        return total_inserted
+
+    def _insert_batch(self, chunks: list[Chunk]) -> int:
+        """单次插入 (≤ MAX_INSERT_BATCH chunks)."""
         data: list[list[Any]] = [
             [],  # text
             [],  # dense_vector
@@ -265,9 +333,16 @@ class MilvusStore(VectorStore):
     # ── 检索 ──
 
     def search_dense(
-        self, query_embedding: np.ndarray, top_k: int = 100
+        self, query_embedding: np.ndarray, top_k: int = 100,
+        filter_expr: str | None = None,
     ) -> list[SearchResult]:
-        """Dense 向量相似度检索."""
+        """Dense 向量相似度检索.
+
+        Args:
+            query_embedding: 查询向量
+            top_k: 返回数量
+            filter_expr: Milvus 标量过滤表达式, 如 'spec_number == "38.211"'
+        """
         self._ensure_connected()
         if self._collection is None:
             return []
@@ -275,16 +350,19 @@ class MilvusStore(VectorStore):
         query_vec = query_embedding.astype(np.float32).reshape(1, -1)
 
         search_params = {"metric_type": "COSINE", "params": {"nprobe": 32}}
-        results = self._collection.search(
-            data=query_vec.tolist(),
-            anns_field="dense_vector",
-            param=search_params,
-            limit=top_k,
-            output_fields=[
+        kwargs = {
+            "data": query_vec.tolist(),
+            "anns_field": "dense_vector",
+            "param": search_params,
+            "limit": top_k,
+            "output_fields": [
                 "text", "doc_id", "series", "spec_number",
                 "release", "parent_section_id", "parent_title", "chunk_index",
             ],
-        )
+        }
+        if filter_expr:
+            kwargs["expr"] = filter_expr
+        results = self._collection.search(**kwargs)
 
         output: list[SearchResult] = []
         for hits in results:

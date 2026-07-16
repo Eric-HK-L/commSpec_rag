@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
 import { search, ask, searchBatch, type SearchResult, type AskResponse } from "@/lib/api";
 
 const PRESET_QUERIES = [
@@ -13,6 +14,7 @@ const PRESET_QUERIES = [
 export default function SearchTestPage() {
   const [query, setQuery] = useState("");
   const [topK, setTopK] = useState(10);
+  const [rerankerEnabled, setRerankerEnabled] = useState(true);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [answer, setAnswer] = useState<AskResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -36,17 +38,17 @@ export default function SearchTestPage() {
     setElapsed(null);
 
     try {
-      const t0 = performance.now();
-      const [searchRes, askRes] = await Promise.all([
-        search(q, topK),
-        ask(q, topK),
-      ]);
-      const t1 = performance.now();
-      const t2 = performance.now();
+      const tSearch0 = performance.now();
+      const searchRes = await search(q, topK);
+      const tSearch1 = performance.now();
+
+      const tAsk0 = performance.now();
+      const askRes = await ask(q, topK, undefined, rerankerEnabled);
+      const tAsk1 = performance.now();
 
       setResults(searchRes.results);
       setAnswer(askRes);
-      setElapsed({ search: t1 - t0, ask: t2 - t0 });
+      setElapsed({ search: tSearch1 - tSearch0, ask: tAsk1 - tAsk0 });
     } catch (err) {
       setError(err instanceof Error ? err.message : "请求失败");
     } finally {
@@ -79,11 +81,11 @@ export default function SearchTestPage() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="输入测试查询..."
-          className="flex-1 px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-600
+          className={`flex-1 px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-600
                      bg-white dark:bg-gray-900 shadow-sm
                      focus:outline-none focus:ring-2 focus:ring-blue-500
                      text-base text-gray-900 dark:text-gray-100
-                     placeholder:text-gray-400 dark:placeholder:text-gray-500"
+                     placeholder:text-gray-400 dark:placeholder:text-gray-500`}
           disabled={loading}
         />
         <select
@@ -96,6 +98,19 @@ export default function SearchTestPage() {
           ))}
         </select>
         <button
+          type="button"
+          onClick={() => setRerankerEnabled(!rerankerEnabled)}
+          disabled={loading}
+          className={`shrink-0 px-3 py-3 rounded-xl text-xs font-medium border transition-all ${
+            rerankerEnabled
+              ? "bg-purple-50 dark:bg-purple-950/40 border-purple-200 dark:border-purple-700 text-purple-600 dark:text-purple-300"
+              : "bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500"
+          }`}
+          title={rerankerEnabled ? "精排已启用" : "精排已关闭"}
+        >
+          {rerankerEnabled ? "🎯" : "⚡"}
+        </button>
+        <button
           type="submit"
           disabled={!query.trim() || loading}
           className="px-8 py-3 rounded-xl bg-blue-600 dark:bg-blue-500 text-white font-medium hover:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-40 transition-colors"
@@ -104,11 +119,12 @@ export default function SearchTestPage() {
         </button>
       </form>
 
-      {/* 耗时 */}
+      {/* 耗时分解 */}
       {elapsed && (
         <div className="flex gap-4 text-xs text-gray-500 dark:text-gray-400">
           <span>🔍 检索: {(elapsed.search).toFixed(0)}ms</span>
           <span>🤖 LLM: {(elapsed.ask).toFixed(0)}ms</span>
+          <span>🎯 精排: {rerankerEnabled ? "已启用" : "已关闭"}</span>
         </div>
       )}
 
@@ -117,9 +133,9 @@ export default function SearchTestPage() {
         <div className="flex items-center gap-3 mb-3">
           <button
             onClick={() => { setBatchMode(!batchMode); if (!batchMode) handleBatch(); }}
-            className="px-4 py-2 rounded-lg text-sm font-medium
+            className={`px-4 py-2 rounded-lg text-sm font-medium
                        bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300
-                       hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                       hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors`}
           >
             {batchMode ? "收起批量对比" : "📊 批量对比 (NR L1)"}
           </button>
@@ -151,7 +167,7 @@ export default function SearchTestPage() {
         <div className="space-y-3">
           <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase">检索结果 ({results.length})</h2>
           {results.map((r, i) => (
-            <div key={r.chunk_id} className="p-3 rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 shadow-sm text-sm">
+            <div key={`${r.chunk_id}-${i}`} className="p-3 rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 shadow-sm text-sm">
               <div className="flex items-center justify-between mb-1">
                 <span className="font-mono text-xs text-blue-600 dark:text-blue-400">
                   #{i + 1} {r.spec_number} {r.parent_section_id ? `§${r.parent_section_id}` : ""}
@@ -166,7 +182,7 @@ export default function SearchTestPage() {
           )}
         </div>
 
-        {/* LLM 回答 */}
+        {/* LLM 回答 (带 Markdown) */}
         <div className="space-y-3">
           <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase">
             LLM 回答 {answer && <span className="font-normal text-gray-400 dark:text-gray-500">(已验证: {answer.verified ? "✅" : "⚠️"})</span>}
@@ -174,8 +190,32 @@ export default function SearchTestPage() {
           {answer ? (
             <>
               <div className="p-5 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 shadow-sm">
-                <div className="prose prose-sm dark:prose-invert max-w-none leading-relaxed whitespace-pre-wrap">
-                  {answer.answer}
+                <div className="leading-relaxed text-sm text-gray-800 dark:text-gray-200">
+                  <ReactMarkdown
+                    components={{
+                      h1: ({ children }) => <h1 className="text-lg font-bold mt-4 mb-2">{children}</h1>,
+                      h2: ({ children }) => <h2 className="text-base font-semibold mt-3 mb-1.5">{children}</h2>,
+                      h3: ({ children }) => <h3 className="text-sm font-semibold mt-2 mb-1">{children}</h3>,
+                      p: ({ children }) => <p className="my-1.5 leading-relaxed">{children}</p>,
+                      ul: ({ children }) => <ul className="list-disc pl-5 my-1.5 space-y-0.5">{children}</ul>,
+                      ol: ({ children }) => <ol className="list-decimal pl-5 my-1.5 space-y-0.5">{children}</ol>,
+                      code: ({ children, className }) => {
+                        const isInline = !className;
+                        return isInline
+                          ? <code className="px-1 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-xs text-pink-600">{children}</code>
+                          : <code className="block p-2 my-1.5 rounded bg-gray-100 dark:bg-gray-800 text-xs overflow-x-auto">{children}</code>;
+                      },
+                      table: ({ children }) => (
+                        <div className="overflow-x-auto my-2">
+                          <table className="min-w-full border-collapse border border-gray-200 dark:border-gray-700 text-xs">{children}</table>
+                        </div>
+                      ),
+                      th: ({ children }) => <th className="border px-2 py-1 bg-gray-50 dark:bg-gray-800 font-medium">{children}</th>,
+                      td: ({ children }) => <td className="border px-2 py-1">{children}</td>,
+                    }}
+                  >
+                    {answer.answer}
+                  </ReactMarkdown>
                 </div>
               </div>
 

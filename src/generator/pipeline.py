@@ -24,6 +24,7 @@ from src.retriever.cross_ref import _deduplicate_refs, extract_references
 from src.retriever.multi_hop import MultiHopRetriever, needs_multi_hop
 from src.retriever.online_supplement import OnlineSupplement
 from src.retriever.query_quality import diagnose_quality, evaluate_quality, filter_noise
+from src.retriever.reranker import get_reranker
 from src.retriever.search import HybridRetriever, RetrievalResult
 from src.retriever.vector_store import VectorStore
 from src.utils.monitoring import (
@@ -83,8 +84,13 @@ class RAGPipeline:
         # 查询级 LRU 缓存: TTL 1 小时, 最多 256 条, key=md5(query)
         self._query_cache: TTLCache = TTLCache(maxsize=256, ttl=3600)
 
-    def ask(self, query: str) -> RAGResponse:
-        """执行完整 RAG 问答."""
+    def ask(self, query: str, reranker_enabled: bool = True) -> RAGResponse:
+        """执行完整 RAG 问答.
+
+        Args:
+            query: 用户查询
+            reranker_enabled: 是否启用 Cross-Encoder 精排 (请求级覆盖全局配置)
+        """
         # 查询缓存: 相同查询 1 小时内直接返回缓存结果
         cache_key = hashlib.md5(query.lower().strip().encode()).hexdigest()
         cached = self._query_cache.get(cache_key)
@@ -106,7 +112,22 @@ class RAGPipeline:
 
         # Step 3: 混合检索
         t_search = time.time()
+        # 若启用 reranker, 先用大池子检索再精排
+        search_top_k = settings.reranker_top_k if reranker_enabled else settings.max_search_results
+        old_final = self._retriever._final_top_k
+        self._retriever._final_top_k = search_top_k
         results = self._retriever.search(expanded_query, query_embedding)
+        self._retriever._final_top_k = old_final
+
+        # Spec-aware + Cross-Encoder Reranker 精排
+        results = self._post_process_results(
+            query=query, expanded_query=expanded_query,
+            query_embedding=query_embedding, results=results, top_k=settings.max_search_results,
+            reranker_enabled=reranker_enabled,
+        )
+
+        # 过滤低信息密度章节 (缩写表/参考文献等) — 避免污染 LLM 上下文
+        results = _filter_low_quality(results, settings.max_search_results)
         search_dt = time.time() - t_search
 
         # Step 3.2: 多跳检索
@@ -211,13 +232,41 @@ class RAGPipeline:
         self._query_cache[cache_key] = response
         return response
 
-    def search(self, query: str, top_k: int | None = None) -> list[RetrievalResult]:
-        """仅执行检索 (不生成答案)."""
+    def search(self, query: str, top_k: int | None = None, reranker_enabled: bool = True) -> list[RetrievalResult]:
+        """仅执行检索 (不生成答案) — 含 spec-aware + Cross-Encoder 重排序.
+
+        Phase 1: 常规混合检索 (Dense+BM25+RRF).
+        Phase 2: 若 LLM 扩展查询中包含规范号, 对提示规范做定向检索并合并.
+        Phase 3: Cross-Encoder Reranker 对候选精排 (可选启用).
+
+        Args:
+            query: 用户查询
+            top_k: 返回条数
+            reranker_enabled: 是否启用 Cross-Encoder 精排 (请求级覆盖全局配置)
+        """
+        _top_k = top_k or settings.max_search_results
+        # 若启用 reranker, 混合检索用更大的候选池 (reranker 从 N 条中精选 top_k)
+        pool_size = settings.reranker_top_k if reranker_enabled else _top_k
         if top_k is not None:
             self._retriever._final_top_k = top_k
+        else:
+            self._retriever._final_top_k = pool_size
         expanded_query = self._expand_query(query)
         query_embedding = self._get_query_embedding(expanded_query)
-        return self._retriever.search(expanded_query, query_embedding)
+        results = self._retriever.search(expanded_query, query_embedding)
+
+        # Cross-Encoder Reranker 精排 (先执行, 提升候选池质量)
+        results = self._rerank(expanded_query, results, _top_k, reranker_enabled=reranker_enabled)
+
+        # Spec-aware 两阶段检索: 对 LLM 识别出的规范号做定向补充+加权 (最后执行, 确保覆盖)
+        spec_hints = _extract_spec_numbers(expanded_query)
+        if spec_hints:
+            results = _spec_aware_rerank(
+                results, spec_hints, self._retriever._store,
+                query_embedding, _top_k,
+            )
+
+        return results
 
     def _expand_query(self, query: str) -> str:
         try:
@@ -228,6 +277,86 @@ class RAGPipeline:
         except Exception as e:
             logger.warning("查询扩展失败: %s", e)
         return query
+
+    def _post_process_results(
+        self,
+        query: str,
+        expanded_query: str,
+        query_embedding: np.ndarray,
+        results: list[RetrievalResult],
+        top_k: int,
+        reranker_enabled: bool = True,
+    ) -> list[RetrievalResult]:
+        """检索后处理: Cross-Encoder 精排 → spec-aware 定向补充+加权.
+
+        顺序很重要: Cross-Encoder 先精排候选池质量, 然后 spec-aware
+        再对目标规范加权/补充——确保协议相关内容不受 Cross-Encoder
+        窄域低区分度影响而被稀释。
+        """
+        # Step 1: Cross-Encoder Reranker (先精排, 提升候选池整体质量)
+        results = self._rerank(expanded_query, results, top_k, reranker_enabled=reranker_enabled)
+        # Step 2: Spec-aware 定向补充 + 加权覆盖 (最后执行, 确保目标规范排到前面)
+        spec_hints = _extract_spec_numbers(expanded_query)
+        if spec_hints:
+            results = _spec_aware_rerank(
+                results, spec_hints, self._retriever._store,
+                query_embedding, top_k,
+            )
+        return results
+
+    def _rerank(
+        self,
+        query: str,
+        results: list[RetrievalResult],
+        top_k: int,
+        reranker_enabled: bool = True,
+    ) -> list[RetrievalResult]:
+        """Cross-Encoder 精排 — 分数融合 (保留 spec-aware/RRF 信息).
+
+        Cross-Encoder 在窄域 (如 3GPP 规范) 内判别力有限, 完全替换原有分数
+        会导致已调优的 spec-aware + RRF 排序退化。因此采用加权融合:
+        final = α × norm_reranker + (1-α) × norm_original
+        默认 α=0.6 (reranker 主, 原始辅).
+        """
+        if not reranker_enabled:
+            return results[:top_k]
+        reranker = get_reranker()
+        if reranker is None or len(results) <= top_k:
+            return results[:top_k]
+
+        # 保存原始分数并归一化到 [0, 1]
+        import copy
+        orig_scores = np.array([r.score for r in results], dtype=np.float32)
+        orig_min, orig_max = orig_scores.min(), orig_scores.max()
+        if orig_max > orig_min:
+            orig_norm = (orig_scores - orig_min) / (orig_max - orig_min)
+        else:
+            orig_norm = np.ones_like(orig_scores) * 0.5
+
+        try:
+            # 获取 Cross-Encoder 分数 (reranker 内部会设置 result.score)
+            reranked = reranker.rerank(query, results, top_k=len(results))
+        except Exception as e:
+            logger.warning("Reranker 失败, 降级返回原始候选: %s", e)
+            return results[:top_k]
+
+        # 归一化 reranker 分数到 [0, 1]
+        rerank_scores = np.array([r.score for r in reranked], dtype=np.float32)
+        rerank_min, rerank_max = rerank_scores.min(), rerank_scores.max()
+        if rerank_max > rerank_min:
+            rerank_norm = (rerank_scores - rerank_min) / (rerank_max - rerank_min)
+        else:
+            rerank_norm = np.ones_like(rerank_scores) * 0.5
+
+        # 加权融合: reranker 60% + 原始 40%
+        ALPHA = 0.6
+        combined = ALPHA * rerank_norm + (1 - ALPHA) * orig_norm
+
+        # 写回融合分数并排序
+        for r, s in zip(reranked, combined):
+            r.score = float(s)
+        reranked.sort(key=lambda r: r.score, reverse=True)
+        return reranked[:top_k]
 
     def _get_query_embedding(self, query: str) -> np.ndarray:
         try:
@@ -308,3 +437,126 @@ class RAGPipeline:
             logger.info("嵌入模型预热完成")
         except Exception as e:
             logger.warning("嵌入模型预热失败: %s", e)
+
+
+# ── Spec-aware 重排序辅助函数 ──
+
+_SPEC_PATTERN = __import__("re").compile(r'\b(\d{2}\.\d{3})\b')
+
+
+def _extract_spec_numbers(text: str) -> set[str]:
+    """从文本中提取 3GPP 规范号 (如 38.211, 23.501)."""
+    return set(_SPEC_PATTERN.findall(text))
+
+
+def _spec_aware_rerank(
+    results: list["RetrievalResult"],
+    spec_hints: set[str],
+    store,
+    query_embedding,
+    top_k: int,
+    boost_factor: float = 2.0,
+) -> list["RetrievalResult"]:
+    """两阶段 spec-aware 重排序.
+
+    1. 对每个 hint spec 做定向 Dense 检索 (最多 3 条/spec), 补充到结果列表.
+    2. 对匹配 hint spec 的结果分数加权 (×boost_factor).
+    3. 按分数降序排列返回.
+    """
+    import copy
+    from src.retriever.search import RetrievalResult
+
+    seen_ids: set = {str(r.chunk_id) for r in results}  # 统一 str 避免 int/str 混合导致去重失效
+    supplement: list["RetrievalResult"] = []
+
+    # Phase 2: 定向检索 hint specs (用 Milvus 标量过滤)
+    for spec in list(spec_hints)[:3]:  # 最多 3 个 hint spec
+        try:
+            from src.retriever.milvus_store import _escape_milvus_expr
+            escaped_spec = _escape_milvus_expr(spec)
+            spec_results = store.search_dense(
+                query_embedding, top_k=5,
+                filter_expr=f'spec_number == "{escaped_spec}"',
+            )
+            for r in spec_results[:5]:
+                rid = str(r.chunk_id) if hasattr(r, 'chunk_id') else str(id(r))  # 统一 str 去重
+                if rid not in seen_ids:
+                    seen_ids.add(rid)
+                    nr = RetrievalResult.from_search_result(r)
+                    nr.score = nr.score * boost_factor
+                    supplement.append(nr)
+        except Exception:
+            pass
+
+    # Boost existing matches
+    boosted: list["RetrievalResult"] = []
+    for r in results:
+        if r.spec_number in spec_hints:
+            nr = copy.copy(r)
+            nr.score = r.score * boost_factor
+            boosted.append(nr)
+        else:
+            boosted.append(r)
+
+    merged = boosted + supplement
+    merged.sort(key=lambda x: x.score, reverse=True)
+    return merged
+
+
+# ── 低质量章节过滤 ──
+
+# 低信息密度章节: parent_title 命中直接过滤
+_LOW_QUALITY_TITLES = {"Abbreviations", "Definitions", "Symbols", "References"}
+
+# 结构性垃圾文本特征: prefix 匹配命中直接过滤 (目录/Foreword/Scope/Reference)
+_STRUCTURAL_PREFIXES = (
+    "#  Contents", "#  Foreword", "#  1 Scope", "# 1 Scope",
+    "#  2 References", "# 2 References",
+)
+
+# 低信息密度 section_id: 协议规范中前几个 section 通常是 Scope/Refs/Defs 结构章节
+_LOW_INFO_SECTIONS = ("1", "2", "3")  # 主章节号, 非子章节
+
+
+def _is_low_quality(r: "RetrievalResult") -> bool:
+    """判断单个结果是否为低质量 (低信息密度) chunks."""
+    text = (r.text or "").strip()
+    title = r.parent_title or ""
+    # 规则1: parent_title 子串命中低质量章节名 (如 "3.3 Abbreviations")
+    if title:
+        title_lower = title.lower()
+        for kw in ("abbreviation", "definition", "symbol", "reference"):
+            if kw in title_lower and not any(
+                op in title_lower
+                for op in ("operation", "procedure", "function", "configure", "establish")
+            ):
+                return True
+    # 规则2: 文本前缀命中结构性垃圾 (目录/Foreword/Scope/References)
+    if text.startswith(_STRUCTURAL_PREFIXES):
+        return True
+    # 规则3: 短文本仅包含目录/缩写关键词
+    if len(text) < 50 and ("Contents" in text or "Foreword" in text or "Scope" in text):
+        return True
+    # 规则4: parent_section_id 命中 Scope/Refs/Defs 纯顶层章节号
+    sid = r.parent_section_id or ""
+    if sid in _LOW_INFO_SECTIONS and title:
+        low_title_parts = {"scope", "reference", "definition", "abbreviation", "symbol"}
+        if any(p in title_lower for p in low_title_parts):
+            return True
+    return False
+
+
+def _filter_low_quality(results: list["RetrievalResult"], target_k: int) -> list["RetrievalResult"]:
+    """过滤低信息密度章节 (缩写表/符号表/目录/参考文献), 保留 target_k 条高质量结果."""
+    quality: list["RetrievalResult"] = []
+    for r in results:
+        if not _is_low_quality(r):
+            quality.append(r)
+            if len(quality) >= target_k:
+                break
+    # 如果过滤后不够, 从低质量中补充 (排在末尾)
+    if len(quality) < target_k:
+        for r in results:
+            if _is_low_quality(r) and r not in quality and len(quality) < target_k:
+                quality.append(r)
+    return quality

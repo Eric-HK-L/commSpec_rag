@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
+import time as _time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -65,11 +67,57 @@ def init_pipeline(store: VectorStore) -> RAGPipeline:
     return pipeline
 
 
+def _start_release_monitor() -> threading.Thread | None:
+    """启动后台 Release 变更监控线程 (Task 12).
+
+    每 N 分钟扫描文档目录, 检测新增/修改, 自动记录变更日志。
+    不自动触发摄入 (auto_index=False), 仅检测+告警。
+    """
+    interval_minutes = getattr(settings, 'release_monitor_interval_minutes', 0) or 120
+    if interval_minutes <= 0:
+        logger.info("Release 监控已禁用 (interval=0)")
+        return None
+
+    from src.ingestion.release_monitor import ReleaseMonitor
+
+    monitor = ReleaseMonitor()
+    stop_event = threading.Event()
+
+    def _run():
+        # 启动后首次延迟 30s 再检测, 让服务先完成初始化
+        _time.sleep(30)
+        logger.info("Release 监控已启动 (间隔=%dmin)", interval_minutes)
+        while not stop_event.is_set():
+            try:
+                report = monitor.check_and_process(auto_index=False)
+                if report.has_changes:
+                    logger.warning(
+                        "📢 Release 变更检测: +%d 新增, ~%d 修改, -%d 删除",
+                        len(report.new_files), len(report.modified_files),
+                        len(report.deleted_keys),
+                    )
+                    for f in report.new_files[:5]:
+                        logger.info("  新增: %s (%s, %s)", f.path.name, f.spec_number, f.release)
+            except Exception as e:
+                logger.warning("Release 监控检测失败: %s", e)
+            stop_event.wait(interval_minutes * 60)
+
+    t = threading.Thread(target=_run, daemon=True, name="release-monitor")
+    t.start()
+    return t
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _store, _pipeline
     logger.info("=" * 50)
     logger.info("3GPP RAG 启动 — LLM: %s, 向量库: %s", settings.llm_model, settings.vector_db)
+
+    # ── Task 6: 在线搜索配置验证 ──
+    _validate_online_search_config()
+    # ── Task 8: 嵌入缓存状态 ──
+    _log_embedding_cache_status()
+
     _store = init_vector_store()
     try:
         _store.create_collection(drop_existing=False)
@@ -80,6 +128,10 @@ async def lifespan(app: FastAPI):
     logger.info("服务就绪 — %d 条规范记录", _store.count)
     # 预热嵌入模型 (避免首次查询时加载延迟)
     _pipeline._warmup()
+
+    # ── Task 12: 启动 Release 监控 ──
+    _monitor_thread = _start_release_monitor()
+
     yield
     if _store:
         _store.disconnect()
@@ -127,6 +179,54 @@ app.include_router(feedback_router)
 
 # Prometheus /metrics 端点
 app.add_api_route("/metrics", metrics_endpoint, methods=["GET"], include_in_schema=False)
+
+
+# ── 启动辅助函数 ──
+
+def _validate_online_search_config() -> None:
+    """Task 6: 启动时验证在线搜索配置并记录状态."""
+    if not settings.enable_online_search:
+        logger.info("在线搜索: 已禁用 (ENABLE_ONLINE_SEARCH=false)")
+        return
+
+    google_ok = bool(settings.google_api_key and settings.google_cse_id)
+    tspec_ok = bool(settings.tspec_llm_url)
+
+    if not google_ok and not tspec_ok:
+        logger.warning(
+            "在线搜索已启用但未配置任何数据源! "
+            "设置 GOOGLE_API_KEY + GOOGLE_CSE_ID 或 TSPEC_LLM_URL"
+        )
+        return
+
+    sources = []
+    if google_ok:
+        sources.append("Google CSE")
+    if tspec_ok:
+        sources.append(f"TSpec-LLM ({settings.tspec_llm_url})")
+    logger.info(
+        "在线搜索: 已启用 | 数据源: %s | 触发阈值: score<%.2f 或 count<%d",
+        ", ".join(sources),
+        settings.online_score_threshold,
+        5,  # OnlineSupplement 默认 count_threshold
+    )
+
+
+def _log_embedding_cache_status() -> None:
+    """Task 8: 启动时输出嵌入缓存统计."""
+    try:
+        from src.ingestion.embedding_cache import EmbeddingCache
+        cache = EmbeddingCache()
+        st = cache.stats()
+        if st["total_entries"] > 0:
+            logger.info(
+                "嵌入缓存: %d 条 (%s MB) — %s",
+                st["total_entries"], st["size_mb"], st["db_path"],
+            )
+        else:
+            logger.info("嵌入缓存: 空 (首次运行将自动填充)")
+    except Exception as e:
+        logger.debug("嵌入缓存状态读取失败: %s", e)
 
 
 if __name__ == "__main__":

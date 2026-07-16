@@ -113,10 +113,10 @@ def _merge_results(
     原始结果优先排序，补充结果追加末尾.
     """
     merged = list(original)
-    seen_ids = {r.chunk_id for r in merged}
+    seen_ids = {str(r.chunk_id) for r in merged}  # 统一 str 避免 int/str 混合
     for r in supplement:
-        if r.chunk_id not in seen_ids:
-            seen_ids.add(r.chunk_id)
+        if str(r.chunk_id) not in seen_ids:
+            seen_ids.add(str(r.chunk_id))
             r._source_tag = "multi_hop"
             if sub_query_label:
                 r._sub_query = sub_query_label

@@ -63,9 +63,12 @@ class HeaderAwareSplitter:
         self,
         max_chunk_chars: int = 2500,
         chunk_overlap_chars: int = 100,
+        max_chunk_bytes: int = 55000,
     ):
         self.max_chunk = max_chunk_chars
         self.overlap = chunk_overlap_chars
+        # Milvus VARCHAR 65535 bytes 硬限制, 留 ~10KB 安全边距
+        self.max_chunk_bytes = max_chunk_bytes
 
     def split_document(
         self,
@@ -226,13 +229,14 @@ class HeaderAwareSplitter:
         parent_title: str,
         start_idx: int,
     ) -> list[Chunk]:
-        """对超长文本在段落边界二次切分 — 表格/公式原子化保护.
+        """对超长文本在段落边界二次切分 — 表格/公式原子化保护 + 字节上限自适应.
 
         策略:
-        1. 找到所有 Grid Table / Math Block / Pipe Table
+        1. 找到所有 Grid Table / Math Block / Pipe Table / HTML Table
         2. 用占位符替换 → 安全切分 (\\n\\n 不会误伤表格)
-        3. 累计段落至 size 限制 → 还原占位符 → 输出 chunk
-        4. 超长原子块 (单表 > max_chunk) 保持完整，宁可大块不断裂
+        3. 累计段落至 max_chunk_chars → 还原占位符
+        4. 超长原子块保持完整, 但最终检查字节上限:
+           超过 max_chunk_bytes → 按内容类型自适应拆分 (行级)
         """
         # Step 1: 保护原子块
         protected_text, placeholder_map = self._protect_atomic_blocks(text)
@@ -240,7 +244,7 @@ class HeaderAwareSplitter:
         # Step 2: 安全切分（原子块被占位符隐藏，内部 \\n\\n 不会触发切分）
         paragraphs = protected_text.split("\n\n")
 
-        # Step 3: 累计组装 + 还原
+        # Step 3: 累计组装 + 还原 + 字节检查
         chunks: list[Chunk] = []
         buffer = ""
         idx = start_idx
@@ -255,31 +259,294 @@ class HeaderAwareSplitter:
             else:
                 if buffer.strip():
                     chunk_text = self._restore_atomic_blocks(buffer.strip(), placeholder_map)
-                    chunks.append(Chunk(
-                        text=chunk_text,
-                        embedding=None,
-                        doc_id=doc_id, series=series,
-                        spec_number=spec_number, release=release,
-                        parent_section_id=parent_id,
-                        parent_title=parent_title,
-                        chunk_index=idx,
-                    ))
-                    idx += 1
+                    for sub in self._fit_byte_limit(
+                        chunk_text, doc_id, series, spec_number,
+                        release, parent_id, parent_title, idx,
+                    ):
+                        chunks.append(sub)
+                        idx += 1
                 buffer = para
 
         if buffer.strip():
             chunk_text = self._restore_atomic_blocks(buffer.strip(), placeholder_map)
-            chunks.append(Chunk(
-                text=chunk_text,
-                embedding=None,
-                doc_id=doc_id, series=series,
-                spec_number=spec_number, release=release,
-                parent_section_id=parent_id,
-                parent_title=parent_title,
-                chunk_index=idx,
-            ))
+            for sub in self._fit_byte_limit(
+                chunk_text, doc_id, series, spec_number,
+                release, parent_id, parent_title, idx,
+            ):
+                chunks.append(sub)
 
         return chunks
+
+    # ── 字节上限自适应拆分 ──
+
+    def _fit_byte_limit(
+        self,
+        text: str,
+        doc_id: str,
+        series: int,
+        spec_number: str,
+        release: str,
+        parent_id: str,
+        parent_title: str,
+        start_idx: int,
+    ) -> list[Chunk]:
+        """确保 chunk 字节数不超过 max_chunk_bytes, 超限则按内容类型自适应拆分."""
+        text_bytes = len(text.encode("utf-8"))
+        if text_bytes <= self.max_chunk_bytes:
+            return [Chunk(
+                text=text, embedding=None,
+                doc_id=doc_id, series=series,
+                spec_number=spec_number, release=release,
+                parent_section_id=parent_id, parent_title=parent_title,
+                chunk_index=start_idx,
+            )]
+
+        logger.info(
+            "chunk 超字节上限 (%dB > %dB), 按内容类型拆分: %s/%s",
+            text_bytes, self.max_chunk_bytes, spec_number, parent_title[:60],
+        )
+        sub_texts = self._split_oversized(text)
+        return [
+            Chunk(
+                text=sub, embedding=None,
+                doc_id=doc_id, series=series,
+                spec_number=spec_number, release=release,
+                parent_section_id=parent_id, parent_title=parent_title,
+                chunk_index=start_idx + i,
+            )
+            for i, sub in enumerate(sub_texts)
+        ]
+
+    def _split_oversized(self, text: str) -> list[str]:
+        """对超字节上限的内容按类型自适应拆分.
+
+        检测优先级:
+        1. Grid Table (Pandoc +---+) → 行组拆分, 每组子表保留表头
+        2. HTML Table (<table>)        → <tr> 行拆分
+        3. 其他                        → 换行边界拆分 (兜底)
+        """
+        lines = text.split("\n")
+        # 检测窗口: 3GPP 规范中表格前常有章节标题 + 一段说明,
+        # 50 行覆盖了最极端的情况 (实测最长 prose 前缀 ~40 行)
+        head = lines[: min(50, len(lines))]
+        plus_count = sum(1 for l in head if l.strip().startswith("+"))
+        if plus_count >= 2:
+            return self._split_grid_table_rows(text)
+
+        if "<table" in text[:500].lower():
+            return self._split_html_table_rows(text)
+
+        return self._split_text_by_lines(text)
+
+    def _split_grid_table_rows(self, text: str) -> list[str]:
+        """拆分巨型 Pandoc Grid Table — 在 +---+ 行组边界切断, 零信息丢失.
+
+        表头策略:
+        1. 表格前的文档上下文 (prose + heading) → 完整保留在每个子表
+           (上下文大小由上游 max_chunk_chars buffer 自然限制, 无需截断)
+        2. 表格列头 (第一个 + 到 +===+) → 始终保留
+
+        极端情况:
+        - 合并单元格表格 (单组 > 600KB)
+          → 行组内按换行拆分, 子表仍保留完整表头上下文
+        """
+        lines = text.split("\n")
+
+        # ── 1. 找表格起始 (第一个 + 行) ──
+        table_start = 0
+        for i, line in enumerate(lines):
+            if line.strip().startswith("+"):
+                table_start = i
+                break
+
+        # ── 2. 文档上下文 = 表格前的所有行 (零丢失: 不截断, 完整保留) ──
+        # 上下文大小由上游 _split_long_section 的 max_chunk_chars buffer 自然限制,
+        # 通常 ≤ 10KB, 不会造成子表 header 膨胀。
+        doc_context = lines[:table_start]
+
+        # ── 3. 表格列头: table_start → 第一个 +===+ (限表格前 40 行搜索) ──
+        col_header_end = table_start
+        search_end = min(table_start + 40, len(lines))
+        for i in range(table_start, search_end):
+            if "===" in lines[i]:
+                col_header_end = i + 1
+                break
+        if col_header_end == table_start:
+            col_header_end = table_start + 1  # 至少取第一行边框
+
+        # ── 4. 合成表头: 文档上下文 + 表格列头 ──
+        header_lines = doc_context + lines[table_start:col_header_end]
+        header_bytes = sum(len(l.encode("utf-8")) + 1 for l in header_lines)
+
+        # ── 5. 收集数据行组 (所有 + 线为边界, 中间内容自动归组) ──
+        # 3GPP 表格的 Pandoc 输出极其异构:
+        #   - 标准表:    +---+  content  +---+  +---+  content  +---+
+        #   - 合并单元格: +---+  content  +---+  content  +---+
+        #                 (一个 +---+ 既是关闭也是开启, 无连续双边框)
+        #   - 子表头:     +===+ (语义同 +---+)
+        # 此处的无状态收集方案统一处理以上所有情况, 零行丢失.
+        data_lines = lines[col_header_end:]
+        groups: list[list[str]] = []
+        current: list[str] = []
+
+        for line in data_lines:
+            is_sep = line.strip().startswith("+")
+            if is_sep:
+                # flush current group if it has actual content (not just borders)
+                if current and any(not l.strip().startswith("+") for l in current):
+                    groups.append(current)
+                current = [line]
+            else:
+                current.append(line)
+
+        # 最后一段: 仅含实际内容才保留 (尾部孤立的 +---+ 不生成无效组)
+        if current and any(not l.strip().startswith("+") for l in current):
+            groups.append(current)
+
+        if not groups:
+            return [text]
+
+        # ── 6. 行组合并到 max_chunk_bytes ──
+        def _build_table(row_groups: list[list[str]]) -> str:
+            """用表头 + 行组构建子表文本."""
+            all_lines = list(header_lines)
+            for bg in row_groups:
+                all_lines.extend(bg)
+            return "\n".join(all_lines)
+
+        result: list[str] = []
+        buf_groups: list[list[str]] = []
+        buf_bytes = header_bytes
+
+        for g in groups:
+            g_bytes = sum(len(l.encode("utf-8")) + 1 for l in g)
+
+            if g_bytes > self.max_chunk_bytes:
+                # 合并单元格: 单行组超大 → 先 flush 已缓存行组
+                if buf_groups:
+                    result.append(_build_table(buf_groups))
+                    buf_groups = []
+                    buf_bytes = header_bytes
+
+                # 行组内按换行拆分 (每段仍带表头)
+                inner_buf: list[str] = []
+                inner_bytes = header_bytes
+                for line in g:
+                    lb = len(line.encode("utf-8")) + 1
+                    if inner_bytes + lb > self.max_chunk_bytes and inner_buf:
+                        result.append("\n".join(header_lines + inner_buf))
+                        inner_buf = [line]
+                        inner_bytes = header_bytes + lb
+                    else:
+                        inner_buf.append(line)
+                        inner_bytes += lb
+                if inner_buf:
+                    result.append("\n".join(header_lines + inner_buf))
+            elif buf_bytes + g_bytes > self.max_chunk_bytes and buf_groups:
+                result.append(_build_table(buf_groups))
+                buf_groups = [g]
+                buf_bytes = header_bytes + g_bytes
+            else:
+                buf_groups.append(g)
+                buf_bytes += g_bytes
+
+        if buf_groups:
+            result.append(_build_table(buf_groups))
+
+        logger.debug(
+            "Grid Table 拆分: %dB → %d 子表 (均 ≤ %dB)",
+            len(text.encode("utf-8")),
+            len(result),
+            max(len(r.encode("utf-8")) for r in result) if result else 0,
+        )
+        return result if result else [text]
+
+    def _split_html_table_rows(self, text: str) -> list[str]:
+        """拆分 HTML <table> — 在 <tr> 行边界切断, 每组子表保留 <thead>.
+
+        极端情况: 单个 <tr> 超过 max_chunk_bytes → 行内按换行拆分,
+        每段仍带 <thead> + <table> 包裹以保证 HTML 结构完整。
+        """
+        import re
+
+        thead_match = re.search(
+            r"(<table[^>]*>.*?</thead>)", text, re.DOTALL | re.IGNORECASE,
+        )
+        header = thead_match.group(1) if thead_match else ""
+        if not header:
+            table_open = re.match(r"(<table[^>]*>)", text, re.IGNORECASE)
+            header = table_open.group(1) if table_open else "<table>"
+
+        close_tag = "</table>"
+        header_size = len(header.encode("utf-8")) + len(close_tag.encode("utf-8"))
+
+        rows = re.findall(r"(<tr[^>]*>.*?</tr>)", text, re.DOTALL | re.IGNORECASE)
+        if not rows:
+            return self._split_text_by_lines(text)
+
+        result: list[str] = []
+        buf_rows: list[str] = []
+        buf_size = header_size
+
+        for row in rows:
+            row_size = len(row.encode("utf-8"))
+
+            if row_size > self.max_chunk_bytes:
+                # 单个 <tr> 超过上限: flush 已缓存, 行内按换行拆分
+                if buf_rows:
+                    result.append(header + "\n" + "\n".join(buf_rows) + "\n" + close_tag)
+                    buf_rows = []
+                    buf_size = header_size
+
+                # 行内拆分 (保留 HTML 结构包裹)
+                inner_lines = row.split("\n")
+                inner_buf: list[str] = []
+                inner_bytes = header_size
+                for line in inner_lines:
+                    lb = len(line.encode("utf-8")) + 1
+                    if inner_bytes + lb > self.max_chunk_bytes and inner_buf:
+                        result.append(header + "\n" + "\n".join(inner_buf) + "\n" + close_tag)
+                        inner_buf = [line]
+                        inner_bytes = header_size + lb
+                    else:
+                        inner_buf.append(line)
+                        inner_bytes += lb
+                if inner_buf:
+                    result.append(header + "\n" + "\n".join(inner_buf) + "\n" + close_tag)
+            elif buf_size + row_size > self.max_chunk_bytes and buf_rows:
+                result.append(header + "\n" + "\n".join(buf_rows) + "\n" + close_tag)
+                buf_rows = [row]
+                buf_size = header_size + row_size
+            else:
+                buf_rows.append(row)
+                buf_size += row_size
+
+        if buf_rows:
+            result.append(header + "\n" + "\n".join(buf_rows) + "\n" + close_tag)
+
+        return result if result else [text]
+
+    def _split_text_by_lines(self, text: str) -> list[str]:
+        """通用行级拆分 — 在换行边界切断 (兜底策略, 极少触发)."""
+        lines = text.split("\n")
+        result: list[str] = []
+        buf: list[str] = []
+        buf_bytes = 0
+
+        for line in lines:
+            line_bytes = len(line.encode("utf-8")) + 1  # +1 for \n
+            if buf_bytes + line_bytes > self.max_chunk_bytes and buf:
+                result.append("\n".join(buf))
+                buf = [line]
+                buf_bytes = line_bytes
+            else:
+                buf.append(line)
+                buf_bytes += line_bytes
+
+        if buf:
+            result.append("\n".join(buf))
+
+        return result if result else [text]
 
     # ── 原子块保护 ──
 

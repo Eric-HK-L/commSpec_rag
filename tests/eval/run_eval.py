@@ -75,31 +75,47 @@ def format_report(report: EvalReport, elapsed_ms: float) -> str:
     return "\n".join(lines)
 
 
-def run_eval(test_set_path: str, top_k: int = 20) -> None:
+def run_eval(test_set_path: str, top_k: int = 20, dry_run: bool = False) -> None:
     """执行评测主流程."""
     # 1. 加载测试集
     samples = load_test_set(test_set_path)
     print(f"✅ 加载测试集: {len(samples)} 条")
 
-    # 2. 初始化检索器 (需 API 在线)
+    # 2. 空跑模式: 仅验证测试集格式, 不连接 Milvus
+    if dry_run:
+        _dry_run(samples)
+        return
+
+    # 3. 初始化检索器 (完整 RAGPipeline: 查询扩展 + Dense+BM25 混合检索)
     try:
-        from src.retriever.search import HybridRetriever
-        retriever = HybridRetriever()
-        retriever.initialize()
-        print("✅ 检索器就绪")
+        from src.retriever.milvus_store import MilvusStore
+        from src.generator.pipeline import RAGPipeline
+        from src.config import settings
+
+        store = MilvusStore(
+            host=settings.milvus_host,
+            port=settings.milvus_port,
+            collection_name=settings.milvus_collection_name,
+        )
+        store.connect()
+        pipeline = RAGPipeline(vector_store=store)
+        print(f"✅ 检索器就绪 (Milvus: {store.count} chunks)")
     except Exception as e:
-        print(f"⚠️ 检索器初始化失败 (API 未运行?): {e}")
+        print(f"⚠️ 检索器初始化失败 (Milvus 未运行?): {e}")
         print("进入空跑模式 — 仅验证测试集格式")
         _dry_run(samples)
         return
 
-    # 3. 逐条评测
+    # 4. 逐条评测
     results: list[EvalResult] = []
     t0 = time.time()
     for i, sample in enumerate(samples):
         try:
-            retrieval = retriever.search(sample.question, top_k=top_k)
-            retrieved_specs = [r.spec_number for r in retrieval]
+            retrieval = pipeline.search(sample.question, top_k=top_k)
+            retrieved_specs = [
+                r.spec_number for r in retrieval
+                if hasattr(r, 'spec_number') and r.spec_number
+            ]
             result = evaluate_one(sample, retrieved_specs)
             results.append(result)
             if (i + 1) % 10 == 0:
@@ -147,12 +163,16 @@ def main():
         "--top-k", type=int, default=20,
         help="检索 Top-K (默认: 20)"
     )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="仅验证测试集格式, 不连接 Milvus (适用于 CI)"
+    )
     args = parser.parse_args()
 
     test_set = args.test_set or str(
         Path(__file__).resolve().parent / "test_set.json"
     )
-    run_eval(test_set, top_k=args.top_k)
+    run_eval(test_set, top_k=args.top_k, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

@@ -104,6 +104,19 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     store.disconnect()
 
 
+def cmd_feedback(args: argparse.Namespace) -> None:
+    """反馈分析报告."""
+    from src.generator.feedback import generate_report, get_stats
+
+    if args.subcommand == "stats":
+        import json as _json
+        stats = get_stats()
+        print(_json.dumps(stats, ensure_ascii=False, indent=2))
+    elif args.subcommand == "report":
+        report = generate_report()
+        print(report)
+
+
 def cmd_incremental(args: argparse.Namespace) -> None:
     """Phase 2: 增量索引 — 仅处理变更文档."""
     from src.ingestion.incremental import IncrementalIndexer
@@ -167,6 +180,14 @@ def main() -> None:
     p_incr = sub.add_parser("incremental", help="增量索引 (仅处理变更文档)")
     p_incr.add_argument("--dry-run", action="store_true", help="仅预览变更")
     p_incr.set_defaults(func=cmd_incremental)
+
+    # Phase 4: 反馈分析
+    p_feedback = sub.add_parser("feedback", help="用户反馈统计与分析报告")
+    p_feed_sub = p_feedback.add_subparsers(dest="subcommand")
+    p_feed_stats = p_feed_sub.add_parser("stats", help="简要统计 (JSON)")
+    p_feed_stats.set_defaults(func=cmd_feedback)
+    p_feed_report = p_feed_sub.add_parser("report", help="生成 Markdown 分析报告")
+    p_feed_report.set_defaults(func=cmd_feedback)
 
     args = parser.parse_args()
     if args.command is None:

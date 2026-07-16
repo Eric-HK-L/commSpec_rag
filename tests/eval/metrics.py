@@ -41,26 +41,29 @@ class EvalReport:
 
 
 def compute_relevant_ranks(retrieved_specs: list[str], expected_specs: list[str]) -> list[int]:
-    """计算预期规范在检索结果中的排名 (1-based).
+    """计算预期规范在检索结果中的首次排名 (1-based, 去重).
 
-    返回每个命中 expected_spec 的排名列表，未命中则跳过.
+    每个 expected_spec 只记录第一次命中的排名.
     """
     expected_set = {s.lower() for s in expected_specs}
+    seen: set[str] = set()
     ranks: list[int] = []
     for rank, spec in enumerate(retrieved_specs, start=1):
-        if spec.lower() in expected_set:
+        key = spec.lower()
+        if key in expected_set and key not in seen:
             ranks.append(rank)
+            seen.add(key)
     return ranks
 
 
 def recall_at_k(retrieved_specs: list[str], expected_specs: list[str], k: int) -> float:
-    """Recall@K: Top-K 结果中命中的预期规范占比."""
+    """Recall@K: Top-K 结果中命中的唯一预期规范占比 (去重)."""
     if not expected_specs:
         return 1.0
     top_k = retrieved_specs[:k]
     expected_set = {s.lower() for s in expected_specs}
-    hits = sum(1 for s in top_k if s.lower() in expected_set)
-    return hits / len(expected_specs)
+    unique_hits = {s.lower() for s in top_k if s.lower() in expected_set}
+    return len(unique_hits) / len(expected_set)
 
 
 def reciprocal_rank(relevant_ranks: list[int]) -> float:

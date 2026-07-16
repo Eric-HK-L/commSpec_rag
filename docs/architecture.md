@@ -1,6 +1,6 @@
 # 3GPP RAG 融合项目 — 系统架构文档
 
-> 版本：v2.1 | 最后更新：2026-07-14
+> 版本：v2.3 | 最后更新：2026-07-15
 
 ---
 
@@ -14,7 +14,8 @@
    - [3.3 检索层](#33-检索层-srcretriever)
    - [3.4 生成层](#34-生成层-srcgenerator)
    - [3.5 API 服务层](#35-api-服务层-srcapi)
-   - [3.6 工具层](#36-工具层-srcutils)
+   - [3.6 前端层](#36-前端层-frontend)
+   - [3.7 工具层](#37-工具层-srcutils)
 4. [数据流](#4-数据流)
 5. [关键设计决策](#5-关键设计决策)
 6. [部署架构](#6-部署架构)
@@ -42,7 +43,7 @@
 | 嵌入模型 | BGE-M3（多语言，1024-dim，稠密+稀疏双向量） |
 | 向量数据库 | Milvus 2.4+（Dense + BM25 混合检索；BGE-M3 原生 sparse 向量待迁移）|
 | 文档处理 | Docling（DOCX → Markdown）|
-| 前端 | Next.js 14（React + Tailwind CSS）|
+| 前端 | Next.js 16（React 19 + Tailwind CSS 4）+ react-markdown |
 | 部署 | Docker Compose（etcd + MinIO + Milvus + API + Frontend）|
 
 ### 数据目录结构
@@ -61,6 +62,7 @@
 │   └── embedding_cache.db          ← 嵌入向量 SQLite 缓存
 ├── checkpoint/
 │   └── chunks_checkpoint.pkl       ← 提取阶段断点（避免重复 DOCX 解析）
+├── feedback.db                      ← 用户反馈 SQLite 数据库
 └── processed/                       ← 中间产物（.gitkeep 保留目录）
 ```
 
@@ -123,7 +125,7 @@ src/
 ├── config/settings.py          ← 全局配置 (Pydantic)
 ├── ingestion/                  ← 文档摄入管线
 │   ├── extractor.py            ← DOCX → Markdown (Docling)
-│   ├── splitter.py             ← 标题感知分块
+│   ├── splitter.py             ← 智能分块 (标题感知 + Grid Table 行组拆分 + 字节门禁)
 │   ├── embedder.py             ← 批量嵌入生成
 │   ├── orchestrator.py         ← 全流程编排
 │   ├── mps_embedder.py         ← Apple MPS GPU 安全嵌入 (spawn)
@@ -147,7 +149,8 @@ src/
 │   ├── prompt.py               ← 提示词模板
 │   ├── verifier.py             ← 幻觉验证
 │   ├── i18n.py                 ← 多语言 (zh/ko → EN → zh/ko)
-│   └── release_aware.py        ← Release 版本感知
+│   ├── release_aware.py        ← Release 版本感知
+│   └── feedback.py             ← 用户反馈分析 (统计报告生成)
 ├── api/                        ← API 层
 │   ├── rest/router.py          ← REST API (/search, /ask, /documents)
 │   ├── rest/admin_router.py    ← 管理端点
@@ -161,7 +164,13 @@ src/
 │   ├── helpers.py              ← 硬件检测 + 平台适配
 │   └── monitoring.py           ← Prometheus 指标
 ├── main.py                     ← FastAPI 服务入口
-└── cli.py                      ← CLI 工具
+└── cli.py                      ← CLI 工具 (stats/ingest/incremental/feedback)
+
+tests/
+└── eval/                       ← 检索质量评测
+    ├── run_eval.py             ← 评测执行 (完整 RAGPipeline 检索)
+    ├── metrics.py              ← Recall@K / MRR / NDCG 指标
+    └── test_set.json           ← 70 题 3GPP QA 评测集
 ```
 
 ---
@@ -200,7 +209,25 @@ src/
 
 **[extractor.py](file://src/ingestion/extractor.py)** — DOCX → Markdown 转换（Docling 管线），保留表格、列表、公式结构。
 
-**[splitter.py](file://src/ingestion/splitter.py)** — 基于 Markdown 标题层级（`#/##/###`）的语义分块，保留父章节路径。`chunk_size=512`, `chunk_overlap=50` 可配。
+**[splitter.py](file://src/ingestion/splitter.py)** — 三层自适应分块引擎，零信息丢失：
+
+| 层级 | 机制 | 触发条件 | 作用 |
+|------|------|----------|------|
+| **Layer 1: 标题感知** | 按 `#/##/###` 层级切分，保留父章节路径 | 默认 | 结构化语义分块 |
+| **Layer 2: 内容感知拆分** | Grid Table 行组拆分 / HTML `<tr>` 拆分 / 换行拆分 | chunk > 55KB | 在语义边界精确切割巨型表格 |
+| **Layer 3: 字节截断兜底** | `_safe_truncate_bytes` 语义边界截断 | 极少数不可拆分内容 | 确保入库不崩溃 |
+
+**Grid Table 智能拆分**：
+- 无状态边界收集算法，统一处理标准表、合并单元格表、`+===+` 子表头三种异构 Pandoc 输出
+- 每个子表自包含完整列头 + 文档上下文（heading + prose），独立可检索
+- 实测：967 个超限 chunk → 3,697 个安全子表，99.4% ≤ 55KB，行覆盖率 99.5%
+
+**崩溃防护**：
+- 提取阶段 `_normalize_chunk_sizes` 确保 checkpoint 已是干净尺寸（≤55KB）
+- 嵌入阶段 `_safe_truncate_bytes` 双重兜底
+- Milvus VARCHAR 65535 硬限制，55KB 提供 10KB+ 安全边距
+
+`chunk_size=512`, `chunk_overlap=50` 可配。
 
 **[embedder.py](file://src/ingestion/embedder.py)** — 批量嵌入生成器，支持云端 API 和本地 BGE 模型双后端，带重试和断点续传。
 
@@ -367,6 +394,9 @@ src/
 | `/api/v1/documents/{id}/chunks` | GET | 文档 Chunk 列表 |
 | `/api/v1/documents/{id}` | DELETE | 删除文档 |
 | `/api/v1/stats` | GET | 系统统计（Release/Series 分布） |
+| `/api/v1/feedback` | POST | 提交 👍/👎 用户反馈 |
+| `/api/v1/feedback` | GET | 反馈列表查询（分页+筛选） |
+| `/api/v1/feedback/stats` | GET | 反馈汇总统计（好评率） |
 | `/metrics` | GET | Prometheus 指标 |
 
 #### 中间件栈
@@ -380,6 +410,75 @@ Request → CORS → RequestLogging → Prometheus → APIKey → Router → Res
 **[admin_router.py](file://src/api/rest/admin_router.py)** — 管理端点（摄入触发、状态查询）。
 
 **[feedback.py](file://src/api/rest/feedback.py)** — 用户 👍/👎 反馈收集。
+
+**[schemas.py](file://src/api/rest/schemas.py)** — Pydantic 请求/响应模型。
+
+#### 监控与可观测性
+
+**[monitoring.py](file://src/utils/monitoring.py)** — Prometheus 指标：
+- `record_search()` / `record_ask()` / `record_llm_call()` — 延迟/调用量/错误率
+- `record_multi_hop()` / `record_error()` — 高级检索/异常计数
+
+### 3.6 前端层 (`frontend/`)
+
+前端采用 **DeepSeek 式对话界面** 设计，与搜索引擎式布局有本质区别：
+
+**核心设计**：
+- **对话式消息流** — 用户消息蓝色气泡居右，助手回答居左，Markdown 富文本渲染（表格/代码块/列表）
+- **底部输入栏** — 固定于页面底部，支持 Enter 发送、Shift+Enter 换行
+- **流式回答** — SSE 逐 token 推送，实时 Markdown 渲染
+- **精排开关** — 输入栏左侧 🎯/⚡ 按钮，用户可选择启用/关闭 Cross-Encoder Reranker（质量 vs 速度）
+- **检索溯源隐藏** — 引用依据折叠在每条回答下方，点击展开查看源规范/章节/分数
+- **对话历史侧边栏** — 固定浮层（z-40），遮罩背景，滑入动画
+
+**页面路由**：
+
+| 路由 | 页面 | 说明 |
+|---|---|---|
+| `/` | HomePage | 对话式主界面（Hero → 消息流） |
+| `/admin` | AdminPage | 管理仪表盘（统计 + 快速操作） |
+| `/admin/search` | SearchTestPage | 检索测试台（检索结果 + LLM 回答双栏对比） |
+| `/admin/documents` | DocListPage | 文档管理（筛选/分页/删除） |
+| `/admin/documents/[id]` | DocDetailPage | 文档详情（元数据 + Chunk 列表） |
+| `/documents` | DocBrowserPage | 公开文档浏览（只读） |
+
+**技术栈**：
+- Next.js 16.2 + React 19.2 + TypeScript
+- Tailwind CSS 4 + 明暗主题（CSS 变量 + next-themes 风格 context）
+- react-markdown v10 — 助手回答富文本渲染
+- SSE (Server-Sent Events) — `/api/v1/ask/stream` 流式生成
+- localStorage — 对话历史持久化
+
+**关键文件**：
+
+```
+frontend/
+├── app/
+│   ├── page.tsx                     ← 对话主界面 (HomePage)
+│   ├── layout.tsx                   ← 根布局 (Nav + ThemeProvider)
+│   ├── globals.css                  ← 全局样式 + 主题变量
+│   ├── documents/page.tsx           ← 公开文档浏览器
+│   └── admin/
+│       ├── page.tsx                 ← 管理仪表盘
+│       ├── search/page.tsx          ← 检索测试台 (双栏对比)
+│       └── documents/[id]/page.tsx  ← 文档详情 + Chunk 列表
+├── components/
+│   └── ThemeToggle.tsx              ← 明暗主题切换按钮
+└── lib/
+    ├── api.ts                       ← REST API + SSE 客户端封装
+    ├── theme.tsx                    ← ThemeProvider (React Context)
+    └── useConversationHistory.ts    ← localStorage 对话历史 Hook
+```
+
+### 3.7 工具层 (`src/utils/`)
+
+**[helpers.py](file://src/utils/helpers.py)** — 硬件检测 + 平台适配：
+- `detect_platform()` — 检测 NVIDIA / Apple Silicon / 其他
+- `get_embedding_device_config()` — 返回设备推荐配置
+
+**[monitoring.py](file://src/utils/monitoring.py)** — Prometheus 指标（见 3.5）。
+
+**Grafana Dashboard** — `deploy/grafana-dashboard.json`：9 面板覆盖请求速率、检索延迟、LLM Token 用量、错误率。导入 Grafana 后配合 Prometheus `/metrics` 端点即可使用。
 
 **[auth.py](file://src/api/auth.py)** — API Key 认证中间件。
 
@@ -442,7 +541,11 @@ DOCX 文件 (data/documents/R18/)
 │   .docx → .md (保留表格/列表/公式)     │
 ├──────────────────────────────────────┤
 │ Splitter (HeaderAwareSplitter)        │
-│   按 #/##/### 标题切分, chunk=512     │
+│   三层自适应:                           │
+│   ① 标题层级切分 (默认)                  │
+│   ② Grid Table 行组/HTML<tr>/换行拆分    │
+│      (chunk > 55KB 触发)               │
+│   ③ _safe_truncate_bytes 语义截断 (兜底) │
 │   每个 chunk 注入: spec_id, series,   │
 │   release, section_id, chunk_index   │
 ├──────────────────────────────────────┤

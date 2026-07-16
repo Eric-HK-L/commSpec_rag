@@ -21,15 +21,13 @@ class AnswerVerifier:
         """验证答案的事实基础."""
         warnings: list[str] = []
 
-        # 检查 LLM 是否主动承认不确定性
-        uncertainty_markers = [
-            "根据提供的规范片段无法确定",
-            "规范片段中未提及",
-            "无法确认",
-            "未找到相关",
+        # 检查 LLM 是否主动承认不确定性 (模糊匹配, 多了修饰词也能命中)
+        uncertainty_keywords = [
+            "无法确定", "未提及", "无法确认", "未找到相关",
+            "cannot determine", "not mentioned", "cannot confirm",
         ]
-        for marker in uncertainty_markers:
-            if marker in answer:
+        for kw in uncertainty_keywords:
+            if kw.lower() in answer.lower():
                 return {
                     "answer": answer,
                     "verified": True,

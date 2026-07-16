@@ -124,6 +124,59 @@ def find_docx_files(doc_dir: str) -> list[Path]:
 
 # ── 单篇处理 ──
 
+def _normalize_chunk_sizes(all_chunks: list, splitter: HeaderAwareSplitter) -> list:
+    """拆分超字节上限的 chunk, 确保 checkpoint 中所有 chunk ≤ 55KB.
+
+    在提取阶段调用, 保证保存到 checkpoint 的数据已是干净尺寸。
+    避免 embed_and_insert 阶段因 chunk 数变化导致 skip_chunks 错位。
+    """
+    MAX_BYTES = 55000
+    oversized = sum(1 for c in all_chunks if len(c.text.encode("utf-8")) > MAX_BYTES)
+    if not oversized:
+        return all_chunks
+
+    logger.info("提取后规范化: 修正 %d 个超限 chunk...", oversized)
+    safe: list = []
+    for c in all_chunks:
+        if len(c.text.encode("utf-8")) <= MAX_BYTES:
+            safe.append(c)
+        else:
+            sub = splitter._fit_byte_limit(
+                c.text, c.doc_id, c.series,
+                c.spec_number, c.release,
+                c.parent_section_id, c.parent_title,
+                c.chunk_index,
+            )
+            safe.extend(sub)
+    logger.info(
+        "chunk 规范化完成: %d → %d (+%d), 最大 %dB",
+        len(all_chunks), len(safe),
+        len(safe) - len(all_chunks),
+        max(len(c.text.encode("utf-8")) for c in safe),
+    )
+
+    # ── 最后兜底: 对仍超限的 chunk 做语义截断 (极少数, 丢失尾部 ~1-3%) ──
+    # _fit_byte_limit 中的 line-split 在极端合并单元格下可能残留微超
+    from src.retriever.milvus_store import _safe_truncate_bytes
+
+    hard_capped = 0
+    for c in safe:
+        bs = len(c.text.encode("utf-8"))
+        if bs > MAX_BYTES:
+            c.text = _safe_truncate_bytes(c.text, MAX_BYTES)
+            hard_capped += 1
+            logger.warning(
+                "  硬截断 %s chunk#%d: %dB → %dB (丢失 ~%.0f%%)",
+                c.doc_id, c.chunk_index, bs,
+                len(c.text.encode("utf-8")),
+                100 * (bs - len(c.text.encode("utf-8"))) / bs,
+            )
+    if hard_capped:
+        logger.info("硬截断完成: %d 个 chunk 安全截断至 ≤ %dB", hard_capped, MAX_BYTES)
+
+    return safe
+
+
 def process_single_docx(
     docx: Path,
     extractor: DoclingExtractor,
@@ -427,13 +480,9 @@ def embed_and_insert(
     store: MilvusStore,
     skip_chunks: int = 0,
 ) -> int:
-    """MPS 分段嵌入 + 逐段入库 Milvus。
+    """MPS 分段嵌入 + 逐段入库 Milvus (MilvusStore.insert 内部微批次防 gRPC 超限).
 
-    每段嵌入后立即入库 (断点续传: 段失败不影响已入库段)。
-    skip_chunks: 跳过前 N 条 (从 Milvus 恢复时使用)。
-    MPS 内存由 PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.5 限制 (约 25GB),
-    子进程内部每 500 文本重载模型回收 MPS 缓存。段间进程退出由 OS
-    回收 wired 内存。实测 batch_size=4, wired ~7GB。
+    每段嵌入后立即入库 (段失败不影响已入库段).
     """
     if not all_chunks:
         logger.warning("无 chunk 可入库")
@@ -441,8 +490,20 @@ def embed_and_insert(
 
     store.connect()
 
+    # ── 入库前安全校验: 检测超字节上限的 chunk ──
+    # 不应出现 (提取阶段应已完成拆分); 若出现则发出明确警告
+    MAX_CHUNK_BYTES = 55000
+    oversized = sum(1 for c in all_chunks if len(c.text.encode("utf-8")) > MAX_CHUNK_BYTES)
+    if oversized:
+        logger.warning(
+            "检测到 %d 个 chunk 超过 %d 字节安全上限! "
+            "这通常是使用旧 checkpoint 数据所致. "
+            "入库时 _safe_truncate_bytes 会在语义边界截断, 不会崩溃, "
+            "但会丢失少量尾部内容. 建议重新运行提取阶段以获取完整数据.",
+            oversized, MAX_CHUNK_BYTES,
+        )
+
     total = len(all_chunks)
-    # BGE-M3 1024-dim 向量约 4KB/chunk, 5000 条 ≈ 35MB gRPC 消息, 安全低于 64MB 上限
     segment_size = 5000
     num_segments = (total + segment_size - 1) // segment_size
     skip_segments = skip_chunks // segment_size
@@ -463,8 +524,9 @@ def embed_and_insert(
         end = min(start + segment_size, total)
         seg_texts = [c.text for c in all_chunks[start:end]]
         seg_count = len(seg_texts)
+        seg_id = seg_idx + 1
 
-        logger.info("[段 %d/%d] 编码 %d 条文本...", seg_idx + 1, num_segments, seg_count)
+        logger.info("[段 %d/%d] 编码 %d 条文本...", seg_id, num_segments, seg_count)
         t_seg = time.time()
 
         if use_mps:
@@ -483,19 +545,21 @@ def embed_and_insert(
         seg_elapsed = time.time() - t_seg
         logger.info(
             "[段 %d/%d] 嵌入完成: %d vectors, %.1fs (%.0f t/s)",
-            seg_idx + 1, num_segments, seg_count, seg_elapsed,
+            seg_id, num_segments, seg_count, seg_elapsed,
             seg_count / seg_elapsed if seg_elapsed > 0 else 0,
         )
 
-        # 逐段入库 (断点续传: 段失败不影响已入库段)
+        # 嵌入结果赋给 chunk (供 insert 使用)
         seg_chunks = all_chunks[start:end]
         for c, emb in zip(seg_chunks, seg_emb):
             c.embedding = emb
+
+        # 逐段入库 (MilvusStore.insert 内部按 MAX_INSERT_BATCH=1000 微批次, 防 gRPC 超限)
         n = store.insert(seg_chunks)
         inserted_total += n
         logger.info(
             "[段 %d/%d] 入库: %d chunks → Milvus (累计 %d/%d)",
-            seg_idx + 1, num_segments, n, inserted_total, total,
+            seg_id, num_segments, n, inserted_total, total,
         )
 
     logger.info("全部嵌入+入库完成: %d chunks, %.1fs", inserted_total, time.time() - t_embed)
@@ -560,6 +624,9 @@ def main():
             store.create_collection(drop_existing=False)
             stats, all_chunks = run_incremental(docx_files, extractor, splitter, store, manifest)
         store.disconnect()
+
+        # 提取后规范化 chunk 大小 (零超限, 确保 checkpoint 干净)
+        all_chunks = _normalize_chunk_sizes(all_chunks, splitter)
 
         # 保存 checkpoint (提取最耗时, 避免嵌入失败后重提取)
         if all_chunks:

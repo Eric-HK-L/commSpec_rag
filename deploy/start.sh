@@ -17,7 +17,7 @@ fi
 
 # 2. 创建外部卷（如果不存在）
 echo "📦 检查数据卷..."
-for vol in deploy_etcd_data deploy_minio_data deploy_milvus_data; do
+for vol in spec_rag_etcd_data spec_rag_minio_data spec_rag_milvus_data; do
   if ! docker volume inspect "$vol" &>/dev/null; then
     echo "  创建卷: $vol"
     docker volume create "$vol"

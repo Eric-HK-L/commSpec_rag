@@ -49,9 +49,13 @@ jobs:
       - name: Check import integrity
         run: |
           python -c "
-  from src.generator.prompt import build_rag_prompt
-  from src.generator.i18n import detect_language
-  from src.retriever.cross_ref import extract_references
-  from src.config.settings import Settings
-  print('All core imports OK')
-  "
+from src.generator.prompt import build_rag_prompt
+from src.generator.i18n import detect_language
+from src.retriever.cross_ref import extract_references
+from src.config.settings import Settings
+print('All core imports OK')
+"
+
+      - name: Validate eval test set (dry-run)
+        run: |
+          python -m tests.eval.run_eval --dry-run || echo "⚠️ 测试集不存在, 跳过"

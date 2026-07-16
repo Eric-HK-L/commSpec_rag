@@ -50,7 +50,7 @@ export default function DocumentDetailPage() {
         </div>
         <div className="divide-y divide-gray-100 dark:divide-gray-700">
           {chunks.map((c) => (
-            <div key={c.chunk_id} className="p-4 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+            <div key={c.chunk_index} className="p-4 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
               <div className="flex items-center gap-3 mb-2">
                 <span className="text-xs font-mono bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded text-gray-600 dark:text-gray-400">
                   #{c.chunk_index}

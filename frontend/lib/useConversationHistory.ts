@@ -44,7 +44,7 @@ export function useConversationHistory() {
   const addEntry = useCallback((entry: Omit<ConversationEntry, "id" | "timestamp">) => {
     const newEntry: ConversationEntry = {
       ...entry,
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      id: crypto.randomUUID(),
       timestamp: Date.now(),
     };
     setHistory((prev) => {

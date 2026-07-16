@@ -101,6 +101,57 @@ export interface IngestStatus {
   last_ingestion_at: string | null;
 }
 
+export interface SystemInfo {
+  python_version: string;
+  platform: string;
+  uptime_seconds: number;
+  memory_used_mb: number;
+  memory_total_mb: number;
+  memory_percent: number;
+  disk_used_gb: number;
+  disk_total_gb: number;
+  disk_percent: number;
+  milvus_connected: boolean;
+}
+
+export interface LogEntry {
+  lines: string[];
+  total_lines: number;
+  level: string;
+}
+
+export interface ConfigView {
+  llm_model: string;
+  llm_base_url: string;
+  embedding_device: string;
+  embedding_provider: string;
+  chunk_size: number;
+  chunk_overlap: number;
+  dense_top_k: number;
+  bm25_top_k: number;
+  milvus_host: string;
+  milvus_port: number;
+  online_search_enabled: boolean;
+  reranker_enabled_by_default: boolean;
+}
+
+export interface FeedbackItem {
+  id: number;
+  query: string;
+  answer: string;
+  sources: SourceItem[];
+  rating: string;
+  comment: string;
+  created_at: string;
+}
+
+export interface FeedbackStats {
+  total: number;
+  up: number;
+  down: number;
+  up_ratio: number;
+}
+
 // ── API 调用 ──
 
 async function apiGet<T>(path: string, params?: Record<string, string>): Promise<T> {
@@ -122,7 +173,13 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
-  return res.json();
+  const json = await res.json();
+  // 兼容两种响应格式: 带 APIResponse 包装 (有 success 字段) vs 直接返回数据
+  if ("success" in json) {
+    if (!json.success && json.error) throw new Error(json.error);
+    return json.data as T;
+  }
+  return json as T;
 }
 
 // ── 端点函数 ──
@@ -133,16 +190,16 @@ export async function search(query: string, topK = 10) {
 }
 
 /** RAG 问答 */
-export async function ask(query: string, topK = 10, release?: string) {
-  return apiPost<AskResponse>("/ask", { query, top_k: topK, release });
+export async function ask(query: string, topK = 10, release?: string, rerankerEnabled = true) {
+  return apiPost<AskResponse>("/ask", { query, top_k: topK, release, reranker_enabled: rerankerEnabled });
 }
 
 /** SSE 流式问答 — 返回 fetch Response 供 ReadableStream 消费 */
-export function askStream(query: string, topK = 10, release?: string) {
+export function askStream(query: string, topK = 10, release?: string, rerankerEnabled = true) {
   return fetch(`${API_URL}/ask/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, top_k: topK, release }),
+    body: JSON.stringify({ query, top_k: topK, release, reranker_enabled: rerankerEnabled }),
   });
 }
 
@@ -219,6 +276,33 @@ export async function deleteManifestRecord(key: string) {
   );
 }
 
+/** 系统日志 */
+export async function getSystemLogs(level = "ALL", lines = 100) {
+  return apiGet<LogEntry>("/admin/logs", {
+    level,
+    lines: String(lines),
+  });
+}
+
+/** 系统运行信息 */
+export async function getSystemInfo() {
+  return apiGet<SystemInfo>("/admin/system");
+}
+
+/** 查看配置 */
+export async function getConfig() {
+  return apiGet<ConfigView>("/admin/config");
+}
+
+/** 删除文档 */
+export async function deleteDocument(docId: string) {
+  const res = await fetch(`${API_URL}/documents/${encodeURIComponent(docId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
+  return res.json();
+}
+
 // ── 反馈 API ──
 
 /** 提交 👍👎 反馈 */
@@ -234,5 +318,12 @@ export async function submitFeedback(params: {
 
 /** 反馈统计 */
 export async function getFeedbackStats() {
-  return apiGet<{ total: number; up: number; down: number; up_ratio: number }>("/feedback/stats");
+  return apiGet<FeedbackStats>("/feedback/stats");
+}
+
+/** 反馈列表 */
+export async function getFeedbackList(rating?: string, limit = 50, offset = 0) {
+  const params: Record<string, string> = { limit: String(limit), offset: String(offset) };
+  if (rating) params.rating = rating;
+  return apiGet<FeedbackItem[]>("/feedback", params);
 }
