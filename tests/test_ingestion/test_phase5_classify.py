@@ -123,8 +123,24 @@ class TestClassifyChunkTopicDomain:
         assert result["topic_domain"] == ""
 
     def test_non_38_series(self):
-        """36 系列 → 空字符串."""
+        """非 38 系列 — 按 series 映射到对应 domain."""
+        # 36 系列 → lte_ran
         result = classify_chunk("text", "36.331", "title")
+        assert result["topic_domain"] == "lte_ran"
+
+    def test_non_38_series_core_network(self):
+        """23 系列 → core_network."""
+        result = classify_chunk("text", "23.501", "title")
+        assert result["topic_domain"] == "core_network"
+
+    def test_non_38_series_security(self):
+        """33 系列 → security."""
+        result = classify_chunk("text", "33.401", "title")
+        assert result["topic_domain"] == "security"
+
+    def test_non_38_series_unknown(self):
+        """未映射的系列 → 空字符串."""
+        result = classify_chunk("text", "55.001", "title")
         assert result["topic_domain"] == ""
 
 

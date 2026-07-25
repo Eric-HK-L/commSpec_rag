@@ -207,6 +207,14 @@ class IngestionOrchestrator:
                 "parent_section_id": c.parent_section_id,
                 "parent_title": c.parent_title,
                 "chunk_index": c.chunk_index,
+                "doc_type": c.doc_type,
+                # Phase 5: chunk 元数据
+                "content_type": c.content_type,
+                "spec_role": c.spec_role,
+                "topic_domain": c.topic_domain,
+                "section_number": c.section_number,
+                "section_title": c.section_title,
+                "section_path": c.section_path,
             }
             for c in chunks
         ]
@@ -228,6 +236,13 @@ class IngestionOrchestrator:
                 parent_title=d["parent_title"],
                 chunk_index=d["chunk_index"],
                 embedding=None,
+                doc_type=d.get("doc_type", "3gpp"),
+                content_type=d.get("content_type", ""),
+                spec_role=d.get("spec_role", ""),
+                topic_domain=d.get("topic_domain", ""),
+                section_number=d.get("section_number", ""),
+                section_title=d.get("section_title", ""),
+                section_path=d.get("section_path", ""),
             )
             for d in data
         ]

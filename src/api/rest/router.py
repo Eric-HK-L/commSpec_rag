@@ -47,7 +47,7 @@ def get_pipeline() -> RAGPipeline:
 
 class ChatMessage(BaseModel):
     role: str = Field(..., pattern=r"^(user|assistant)$")
-    content: str = Field(..., min_length=1, max_length=4000)
+    content: str = Field(..., min_length=1, max_length=16000)
 
 
 class AskRequest(BaseModel):
@@ -76,6 +76,13 @@ class SourceItem(BaseModel):
     release: str = ""
     parent_section_id: str = ""
     parent_title: str = ""
+    section_number: str = ""     # chunk 自身的章节编号，如 "7.1.1"
+    section_title: str = ""      # 章节标题，如 "UE behaviour"
+    section_path: str = ""       # 层级路径
+    # Phase 5: chunk 元数据
+    content_type: str = ""
+    spec_role: str = ""
+    topic_domain: str = ""
 
 
 class AskResponse(BaseModel):
@@ -176,6 +183,12 @@ def _result_to_source(r: RetrievalResult) -> SourceItem:
         release=r.release,
         parent_section_id=r.parent_section_id,
         parent_title=r.parent_title,
+        section_number=getattr(r, 'section_number', '') or '',
+        section_title=getattr(r, 'section_title', '') or '',
+        section_path=getattr(r, 'section_path', '') or '',
+        content_type=getattr(r, 'content_type', '') or '',
+        spec_role=getattr(r, 'spec_role', '') or '',
+        topic_domain=getattr(r, 'topic_domain', '') or '',
     )
 
 
@@ -380,6 +393,12 @@ async def ask_stream_endpoint(req: AskRequest):
                     "spec_number": r.spec_number,
                     "parent_section_id": r.parent_section_id,
                     "parent_title": r.parent_title,
+                    "section_number": getattr(r, 'section_number', '') or '',
+                    "section_title": getattr(r, 'section_title', '') or '',
+                    "section_path": getattr(r, 'section_path', '') or '',
+                    "content_type": getattr(r, 'content_type', '') or '',
+                    "spec_role": getattr(r, 'spec_role', '') or '',
+                    "topic_domain": getattr(r, 'topic_domain', '') or '',
                 }
                 for r in response.sources
             ]
@@ -473,6 +492,12 @@ def _get_document_chunks(pipeline: RAGPipeline, doc_id: str) -> list[ChunkItem]:
             parent_section_id=str(r.get("parent_section_id", "")),
             parent_title=str(r.get("parent_title", "")),
             chunk_index=int(r.get("chunk_index", 0)),
+            section_number=str(r.get("section_number", "")),
+            section_title=str(r.get("section_title", "")),
+            section_path=str(r.get("section_path", "")),
+            content_type=str(r.get("content_type", "")),
+            spec_role=str(r.get("spec_role", "")),
+            topic_domain=str(r.get("topic_domain", "")),
         )
         for i, r in enumerate(raw_chunks)
     ]

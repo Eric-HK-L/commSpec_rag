@@ -44,6 +44,22 @@ AUTHORITATIVE_SPECS = {
     "38.331", "38.304", "38.305",               # RRC
     "38.413", "38.423",                         # NGAP/XnAP
 }
+
+# Non-38 系列 → topic_domain 映射
+_SPEC_SERIES_DOMAIN: dict[str, str] = {
+    "23": "core_network",    # 5GS Architecture / Procedures
+    "24": "ue_procedures",   # UE-Network signalling
+    "36": "lte_ran",         # LTE RAN (E-UTRA)
+    "37": "multi_rat",       # Multi-RAT
+    "25": "utran",           # UTRAN
+    "21": "requirements",    # Service/System requirements
+    "22": "requirements",    # Service requirements
+    "33": "security",        # Security
+    "26": "codec",           # Codec
+    "28": "oam",             # OAM/Charging
+    "29": "core_network",    # Core network protocols
+    "32": "oam",             # OAM
+}
 TABLE_KEYWORDS = ["table", "Table"]
 DEFINITION_KEYWORDS = ["definition", "general", "principles", "overview", "architecture"]
 PROCEDURE_KEYWORDS = ["procedure", "procedures", "call flow", "message sequence"]
@@ -77,7 +93,7 @@ def classify_chunk(
     else:
         spec_role = "supporting"
 
-    # 3. topic_domain — 基于 spec_number 前缀推断
+    # 3. topic_domain — 优先查非38系映射表，38系按子系列推断
     parts = spec_number.split(".")
     major = parts[0] if parts else ""
     if major == "38":
@@ -91,7 +107,7 @@ def classify_chunk(
         else:
             topic_domain = ""
     else:
-        topic_domain = ""
+        topic_domain = _SPEC_SERIES_DOMAIN.get(major, "")
 
     return {
         "content_type": content_type,
@@ -188,17 +204,21 @@ class HeaderAwareSplitter:
         # 收集所有标题位置
         headers: list[tuple[int, int, str, str]] = []  # (start, level, sec_id, title)
         for m in HEADER_RE.finditer(text):
-            level = len(m.group(1))
-            # Cap pandoc deep levels: ######## Annex → treat as level 1 (top-level)
-            if level > 4:
-                level = 1
+            md_level = len(m.group(1))
+            # pandoc Annex 级标题 (########=8) → top-level
+            if md_level >= 8:
+                md_level = 1   # Annex: top-level
             title = m.group(2).strip()
             sec_id = ""
             num_match = SECTION_NUM_RE.match(title)
             if num_match:
                 sec_id = num_match.group(1)
                 title = num_match.group(2).strip()
-            headers.append((m.start(), level, sec_id, title))
+                # 以 section number 真实层级修正 Markdown 层级
+                # pandoc 受 DOCX heading 样式数限制 (最多6级), 深层嵌套可能输出相同 # 级别
+                num_level = sec_id.count(".") + 2  # "6.2.3.7.4.1" → 5 dots → level 7
+                md_level = max(md_level, num_level)
+            headers.append((m.start(), md_level, sec_id, title))
 
         # 降级: 无 Markdown 标题 → 尝试 mammoth 纯文本 TOC 章节行
         if not headers:
@@ -296,20 +316,14 @@ class HeaderAwareSplitter:
         return leaves
 
     def _get_parent_context(self, node: SectionNode) -> tuple[str, str]:
-        """获取节点的父章节编号和标题."""
-        ids: list[str] = []
-        titles: list[str] = []
-        current = node.parent
-        while current and current.level > 0:
-            if current.sec_id:
-                ids.append(current.sec_id)
-            if current.title:
-                titles.append(current.title)
-            current = current.parent
+        """获取节点的直接父章节编号和标题.
 
-        parent_id = ".".join(reversed(ids)) if ids else ""
-        parent_title = " > ".join(reversed(titles)) if titles else ""
-        return parent_id, parent_title
+        只取直接父节点 (不拼接祖先链), 完整层级路径见 _build_section_path.
+        """
+        parent = node.parent
+        if parent and parent.level > 0:
+            return parent.sec_id, parent.title
+        return "", ""
 
     @staticmethod
     def _build_section_path(node: SectionNode) -> str:

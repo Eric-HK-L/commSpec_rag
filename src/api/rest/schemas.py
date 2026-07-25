@@ -99,6 +99,13 @@ class ChunkItem(BaseModel):
     parent_section_id: str = ""
     parent_title: str = ""
     chunk_index: int = 0
+    section_number: str = ""     # chunk 自身的章节编号，如 "7.1.1"
+    section_title: str = ""      # 章节标题，如 "UE behaviour"
+    section_path: str = ""       # 层级路径
+    # Phase 5: chunk 元数据
+    content_type: str = ""
+    spec_role: str = ""
+    topic_domain: str = ""
 
 
 # ── 系统统计 ──

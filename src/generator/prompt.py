@@ -204,6 +204,16 @@ def build_rag_prompt(
         section_path = chunk.section_path or chunk.parent_title
         header = f"{ref_label} TS {chunk.spec_number} §{section_label} | {section_path}"
         context_parts.append(f"{header}\n{chunk.text}")
+
+        # 附加相邻 chunk 上下文 — 解决表格/列表内容碎片化问题 (Phase 5 Layer D)
+        adjacent = getattr(chunk, 'adjacent_chunks', None)
+        if adjacent:
+            adj_lines = []
+            for j, t in enumerate(adjacent[:4]):
+                adj_lines.append(f"  [{i+1}.{j+1}] {_grid_table_to_pipe(t)[:500]}")
+            if adj_lines:
+                context_parts.append(f"  （相邻上下文：同文档邻近段落, 非检索命中但语义相关）\n" + "\n".join(adj_lines))
+
         chunk.text = original_text
     context_text = "\n\n---\n\n".join(context_parts)
 
@@ -219,11 +229,13 @@ def build_rag_prompt(
 2. 每个关键论断必须注明来源 —— 使用内联引用编号 [1][2][3]，对应到最后的 References 表
 3. 文档可信度优先级：Physical layer spec 优先（38.211 > 38.212 > 38.213 > 38.214）
    详细说明 > 概述；官方定义 > 一般描述；指定 release 的规范 > 泛用版本
-4. 如果文档片段不足以回答，明确说明"根据提供的规范片段无法确定"，并指出缺少哪些信息
+4. 即使检索片段不完整，也应先基于已有片段整理出可确认的信息，再说明缺失项，不要直接放弃回答
 5. 使用中文回答，但保留规范术语的英文原文（如 PDU Session, N2 Interface）
 6. 回答结构清晰：先给直接答案，再列规范依据
 7. 当回答中包含表格时，必须使用 Markdown 管道表格格式（|列1|列2|），禁止使用 Grid Table（+---+）格式
 8. 回答末尾附 References 表：每行包含 [编号] Section / Section Hierarchy / Cited Content（原文摘录）/ Relevance
+9. 首次引用规范中的技术变量/符号时，必须用中文解释其含义，后续可使用缩写
+   示例：\(\Delta f_{RA}\)（随机接入子载波间隔）、\(L_{RA}\)（前导码序列长度）、\(T_{CP}\)（循环前缀时长）
 16. 片段来源标注了角色标签：🔴权威定义 > 🟡补充参考 > ⚪概述
     优先采纳「🔴权威定义」和「📊参数表」类型的片段作为回答的核心依据"""
 
