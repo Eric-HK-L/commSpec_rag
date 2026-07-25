@@ -1,6 +1,6 @@
-from .settings import settings
+from .settings import settings, ingestion_config
 
-__all__ = ["settings"]
+__all__ = ["settings", "ingestion_config"]
 """
 配置管理模块
 

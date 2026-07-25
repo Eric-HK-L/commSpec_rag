@@ -30,6 +30,10 @@ class RetrievalResult:
     section_title: str = ""     # 章节标题，如 "UE behaviour"
     section_path: str = ""      # 层级路径
     doc_type: str = "3gpp"      # 文档类型: "3gpp" | "oran"
+    # chunk 元数据（摄入时写入 Milvus，检索时零推导开销）
+    content_type: str = ""       # "parameter_table" | "definition" | "procedure" | "overview"
+    spec_role: str = ""          # "authoritative" | "supporting" | "overview"
+    topic_domain: str = ""       # "phy_layer" | "mac_layer" | "rrc_layer" | "ran_arch"
     # 扩展上下文：同文档相邻 chunk
     adjacent_chunks: list[str] = field(default_factory=list)
 
@@ -50,11 +54,21 @@ class RetrievalResult:
             section_title=sr.section_title,
             section_path=sr.section_path,
             doc_type=sr.doc_type,
+            content_type=sr.content_type,
+            spec_role=sr.spec_role,
+            topic_domain=sr.topic_domain,
         )
 
     def to_context_str(self, index: int = 0) -> str:
         """格式化为 LLM 上下文字符串."""
         parts = []
+        # 元数据标签（优先展示权威性标记）
+        role_map = {"authoritative": "🔴权威定义", "supporting": "🟡补充参考", "overview": "⚪概述"}
+        type_map = {"parameter_table": "📊参数表", "definition": "📋定义"}
+        if self.spec_role and self.spec_role in role_map:
+            parts.append(role_map[self.spec_role])
+        if self.content_type and self.content_type in type_map:
+            parts.append(type_map[self.content_type])
         if self.spec_number:
             parts.append(f"TS {self.spec_number}")
         section_ref = self.section_number or self.parent_section_id

@@ -32,7 +32,7 @@ def mock_pipeline():
     pipeline._store.__class__.__name__ = "MilvusStore"
 
     # mock ask() 返回
-    def _ask(query, reranker_enabled=True):
+    def _ask(query, reranker_enabled=True, **kwargs):
         return RAGResponse(
             query=query,
             answer="The PDU Session Resource Setup is defined in TS 38.413 §8.3.1.",
@@ -53,7 +53,7 @@ def mock_pipeline():
     pipeline.ask = _ask
 
     # mock search() 返回
-    def _search(query, top_k=10, reranker_enabled=True):
+    def _search(query, top_k=10, reranker_enabled=True, **kwargs):
         return [
             RetrievalResult(
                 chunk_id="1", text="PDU Session Resource Setup NGAP",

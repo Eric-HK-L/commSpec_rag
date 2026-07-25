@@ -172,6 +172,9 @@ class MilvusStore(VectorStore):
             FieldSchema(name="section_title", dtype=DataType.VARCHAR, max_length=512),
             FieldSchema(name="section_path", dtype=DataType.VARCHAR, max_length=1024),
             FieldSchema(name="doc_type", dtype=DataType.VARCHAR, max_length=32),
+            FieldSchema(name="content_type", dtype=DataType.VARCHAR, max_length=32),
+            FieldSchema(name="spec_role", dtype=DataType.VARCHAR, max_length=32),
+            FieldSchema(name="topic_domain", dtype=DataType.VARCHAR, max_length=32),
         ]
 
         schema = CollectionSchema(fields, description="3GPP 规范检索集合 (Dense)")
@@ -247,6 +250,9 @@ class MilvusStore(VectorStore):
             [],  # section_title
             [],  # section_path
             [],  # doc_type
+            [],  # content_type
+            [],  # spec_role
+            [],  # topic_domain
         ]
 
         for c in chunks:
@@ -264,6 +270,9 @@ class MilvusStore(VectorStore):
             data[10].append(c.section_title[:512] if c.section_title else "")
             data[11].append(c.section_path[:1024] if c.section_path else "")
             data[12].append(c.doc_type[:32] if c.doc_type else "3gpp")
+            data[13].append(c.content_type[:32] if c.content_type else "")
+            data[14].append(c.spec_role[:32] if c.spec_role else "")
+            data[15].append(c.topic_domain[:32] if c.topic_domain else "")
 
         try:
             self._collection.insert(data)
@@ -389,6 +398,7 @@ class MilvusStore(VectorStore):
                 "release", "parent_section_id", "parent_title", "chunk_index",
                 "section_number", "section_title", "section_path",
                 "doc_type",
+                "content_type", "spec_role", "topic_domain",
             ],
         }
         if filter_expr:
@@ -414,6 +424,9 @@ class MilvusStore(VectorStore):
                     section_title=entity.get("section_title", ""),
                     section_path=entity.get("section_path", ""),
                     doc_type=entity.get("doc_type", "3gpp"),
+                    content_type=entity.get("content_type", ""),
+                    spec_role=entity.get("spec_role", ""),
+                    topic_domain=entity.get("topic_domain", ""),
                 ))
         return output
 
@@ -552,6 +565,9 @@ class MilvusStore(VectorStore):
                     parent_title=r.parent_title,
                     chunk_index=r.chunk_index,
                     doc_type=r.doc_type,
+                    content_type=r.content_type,
+                    spec_role=r.spec_role,
+                    topic_domain=r.topic_domain,
                 ))
             elif key in sparse_map:
                 r = sparse_map[key]
@@ -564,6 +580,9 @@ class MilvusStore(VectorStore):
                     chunk_index=r.chunk_index,
                     series=r.series,
                     doc_type=r.doc_type,
+                    content_type=r.content_type,
+                    spec_role=r.spec_role,
+                    topic_domain=r.topic_domain,
                 ))
 
         return results

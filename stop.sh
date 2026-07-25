@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ── 3GPP RAG 一键停止脚本（根目录） ──
+# ── Commspec RAG 一键停止脚本（根目录） ──
 # 用法: ./stop.sh
 # 停止前后端进程 + Docker 容器，恢复到初开机状态
 set -euo pipefail
@@ -12,7 +12,7 @@ BACKEND_PID="$PID_DIR/backend.pid"
 FRONTEND_PID="$PID_DIR/frontend.pid"
 
 echo "========================================"
-echo "  3GPP RAG 一键停止"
+echo "  Commspec RAG 一键停止"
 echo "========================================"
 echo ""
 

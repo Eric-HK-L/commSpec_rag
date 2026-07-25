@@ -8,6 +8,8 @@ on:
       - "tests/**"
       - "scripts/**"
       - "requirements.txt"
+      - "pyproject.toml"
+      - ".env.example"
       - ".github/workflows/ci.yml"
   pull_request:
     branches: [main, master]
@@ -17,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -37,25 +39,33 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest
+          pip install -e .
+
+      - name: Create placeholder .env for CI
+        run: cp .env.example .env
 
       - name: Run unit tests (no Milvus required)
         run: |
-          python -m pytest tests/test_generator/ tests/test_retriever/ \
+          python -m pytest tests/test_generator/ tests/test_retriever/ tests/test_config/ tests/test_utils/ \
             -v --tb=short \
             --ignore=tests/test_ingestion/ \
-            -k "not milvus and not e2e" || true
+            --ignore=tests/test_api/ \
+            -k "not milvus and not e2e"
 
       - name: Check import integrity
         run: |
           python -c "
-from src.generator.prompt import build_rag_prompt
+from src.generator.prompt import build_rag_prompt, TAXONOMY_EXTRA_PROMPT
 from src.generator.i18n import detect_language
 from src.retriever.cross_ref import extract_references
-from src.config.settings import Settings
+from src.retriever.search import RetrievalResult
+from src.config.settings import Settings, IngestionConfig
+from src.config import settings, ingestion_config
+from src.ingestion.splitter import HeaderAwareSplitter, classify_chunk
 print('All core imports OK')
 "
 
       - name: Validate eval test set (dry-run)
+        if: always()
         run: |
-          python -m tests.eval.run_eval --dry-run || echo "⚠️ 测试集不存在, 跳过"
+          python -m tests.eval.run_eval --dry-run 2>/dev/null || echo "⚠️ 测试集不存在, 跳过（非致命）"

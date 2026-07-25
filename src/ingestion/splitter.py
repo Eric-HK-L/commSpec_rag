@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from src.retriever.vector_store import Chunk
 
@@ -36,6 +36,79 @@ MATH_BLOCK_DELIM = re.compile(r'^\$\$$')
 PIPE_TABLE_LINE = re.compile(r'^\|.+\|$')
 PIPE_TABLE_SEP = re.compile(r'^\|[-: ]+\|$')
 
+# ── Chunk 元数据规则分类 ──
+
+AUTHORITATIVE_SPECS = {
+    "38.211", "38.212", "38.213", "38.214",  # PHY
+    "38.321", "38.322", "38.323",               # MAC
+    "38.331", "38.304", "38.305",               # RRC
+    "38.413", "38.423",                         # NGAP/XnAP
+}
+TABLE_KEYWORDS = ["table", "Table"]
+DEFINITION_KEYWORDS = ["definition", "general", "principles", "overview", "architecture"]
+PROCEDURE_KEYWORDS = ["procedure", "procedures", "call flow", "message sequence"]
+
+
+def classify_chunk(
+    text: str,
+    spec_number: str,
+    parent_title: str,
+) -> dict[str, str]:
+    """基于规则的 chunk 元数据分类.
+
+    Returns:
+        {"content_type": ..., "spec_role": ..., "topic_domain": ...}
+    """
+    # 1. content_type
+    if _contains_table(text):
+        content_type = "parameter_table"
+    elif any(kw in parent_title.lower() for kw in DEFINITION_KEYWORDS):
+        content_type = "definition"
+    elif any(kw in parent_title.lower() for kw in PROCEDURE_KEYWORDS):
+        content_type = "procedure"
+    else:
+        content_type = "overview"
+
+    # 2. spec_role
+    if spec_number in AUTHORITATIVE_SPECS:
+        spec_role = "authoritative"
+    elif spec_number == "38.300":
+        spec_role = "overview"
+    else:
+        spec_role = "supporting"
+
+    # 3. topic_domain — 基于 spec_number 前缀推断
+    parts = spec_number.split(".")
+    major = parts[0] if parts else ""
+    if major == "38":
+        sub = parts[1][:1] if len(parts) > 1 and parts[1] else ""
+        if sub == "2":
+            topic_domain = "phy_layer"
+        elif sub == "3":
+            topic_domain = "mac_layer" if "321" in spec_number or "322" in spec_number or "323" in spec_number else "rrc_layer"
+        elif sub == "4":
+            topic_domain = "ran_arch"
+        else:
+            topic_domain = ""
+    else:
+        topic_domain = ""
+
+    return {
+        "content_type": content_type,
+        "spec_role": spec_role,
+        "topic_domain": topic_domain,
+    }
+
+
+def _contains_table(text: str) -> bool:
+    """检测文本是否包含 Markdown 表格 (pipe 或 grid)."""
+    lines = text.split("\n")
+    pipe_sep_count = sum(1 for l in lines if PIPE_TABLE_SEP.match(l.strip()))
+    plus_count = sum(1 for l in lines if l.strip().startswith("+"))
+    return pipe_sep_count >= 1 or plus_count >= 2
+
+
+# ── 章节树节点 ──
 
 @dataclass
 class SectionNode:
@@ -55,6 +128,7 @@ class HeaderAwareSplitter:
     原则:
     - 优先在最深层级拆分 (叶子节点)
     - Grid Table / Math Block / Pipe Table 永不切割
+    - dynamic 模式：表格/正文分离为独立 chunk，各自有独立的 size 上限
     - 超长节点在段落边界二次切分（原子块内部分隔符被保护）
     - 每个 chunk 自动附加 parent_section_id/parent_title
     """
@@ -64,11 +138,21 @@ class HeaderAwareSplitter:
         max_chunk_chars: int = 2500,
         chunk_overlap_chars: int = 100,
         max_chunk_bytes: int = 55000,
+        chunk_mode: Literal["fixed", "dynamic"] = "dynamic",
+        table_max_chars: int = 5000,
+        prose_max_chars: int = 1500,
+        max_chunk_hard_chars: int = 8000,  # BGE-M3 8192 token 安全上限
     ):
         self.max_chunk = max_chunk_chars
         self.overlap = chunk_overlap_chars
         # Milvus VARCHAR 65535 bytes 硬限制, 留 ~10KB 安全边距
         self.max_chunk_bytes = max_chunk_bytes
+        self.chunk_mode = chunk_mode
+        self.table_max_chars = table_max_chars
+        self.prose_max_chars = prose_max_chars
+        # BGE-M3 8192 tokens → 最坏情况 (密集 ASN.1/数字表) ~1 char/token
+        # 8000 chars 确保即使最极端密度也不超 token 限制
+        self.max_chunk_hard = max_chunk_hard_chars
 
     def split_document(
         self,
@@ -244,6 +328,78 @@ class HeaderAwareSplitter:
 
     # ── 长章节二次切分（结构感知） ──
 
+    def _segment_by_atomic_blocks(self, text: str) -> list[tuple[str, str]]:
+        """按原子块边界将文本拆分为 (type, text) 列表.
+
+        type 值: "prose" | "grid_table" | "pipe_table" | "math_block"
+        复用 _protect_atomic_blocks 的检测逻辑, 但改为分割而非替换.
+        """
+        lines = text.split('\n')
+        segments: list[tuple[str, str]] = []
+        i = 0
+        n = len(lines)
+        prose_buf: list[str] = []
+
+        while i < n:
+            stripped = lines[i].strip()
+
+            # Grid Table
+            if GRID_TABLE_BOUNDARY.match(stripped):
+                if prose_buf:
+                    segments.append(("prose", '\n'.join(prose_buf)))
+                    prose_buf = []
+                start_i = i
+                i += 1
+                while i < n:
+                    s = lines[i].strip()
+                    if GRID_TABLE_BOUNDARY.match(s):
+                        next_is_data = (i + 1 < n and
+                                       lines[i + 1].strip().startswith('|'))
+                        if not next_is_data:
+                            i += 1
+                            break
+                    i += 1
+                segments.append(("grid_table", '\n'.join(lines[start_i:i])))
+                continue
+
+            # Math Block
+            if MATH_BLOCK_DELIM.match(stripped):
+                if prose_buf:
+                    segments.append(("prose", '\n'.join(prose_buf)))
+                    prose_buf = []
+                start_i = i
+                i += 1
+                while i < n:
+                    if MATH_BLOCK_DELIM.match(lines[i].strip()):
+                        i += 1
+                        break
+                    i += 1
+                segments.append(("math_block", '\n'.join(lines[start_i:i])))
+                continue
+
+            # Pipe Table
+            if PIPE_TABLE_LINE.match(stripped):
+                if i + 1 < n and PIPE_TABLE_SEP.match(lines[i + 1].strip()):
+                    if prose_buf:
+                        segments.append(("prose", '\n'.join(prose_buf)))
+                        prose_buf = []
+                    start_i = i
+                    i += 2
+                    while i < n:
+                        if not PIPE_TABLE_LINE.match(lines[i].strip()):
+                            break
+                        i += 1
+                    segments.append(("pipe_table", '\n'.join(lines[start_i:i])))
+                    continue
+
+            prose_buf.append(lines[i])
+            i += 1
+
+        if prose_buf:
+            segments.append(("prose", '\n'.join(prose_buf)))
+
+        return segments
+
     def _split_long_section(
         self,
         text: str,
@@ -268,6 +424,15 @@ class HeaderAwareSplitter:
         4. 超长原子块保持完整, 但最终检查字节上限:
            超过 max_chunk_bytes → 按内容类型自适应拆分 (行级)
         """
+        # dynamic 模式：按原子块边界分离表格/正文
+        if self.chunk_mode == "dynamic":
+            return self._split_long_section_dynamic(
+                text, doc_id, series, spec_number, release,
+                parent_id, parent_title, section_number, section_title,
+                section_path, start_idx, doc_type,
+            )
+
+        # ── fixed 模式：原有段落累计逻辑 ──
         # Step 1: 保护原子块
         protected_text, placeholder_map = self._protect_atomic_blocks(text)
 
@@ -311,6 +476,96 @@ class HeaderAwareSplitter:
 
         return chunks
 
+    def _split_long_section_dynamic(
+        self,
+        text: str,
+        doc_id: str,
+        series: int,
+        spec_number: str,
+        release: str,
+        parent_id: str,
+        parent_title: str,
+        section_number: str,
+        section_title: str,
+        section_path: str,
+        start_idx: int,
+        doc_type: str = "3gpp",
+    ) -> list[Chunk]:
+        """Dynamic 模式：按原子块边界分离表格/正文为独立 chunk.
+
+        1. 用 _segment_by_atomic_blocks 拆分为 (type, text) 列表
+        2. 表格/公式 → 独立 chunk，上限 table_max_chars
+        3. 纯文本 → 段落切分，上限 prose_max_chars
+        """
+        segments = self._segment_by_atomic_blocks(text)
+        if not segments:
+            return []
+
+        chunks: list[Chunk] = []
+        idx = start_idx
+
+        for seg_type, seg_text in segments:
+            seg_text = seg_text.strip()
+            if not seg_text:
+                continue
+
+            seg_len = len(seg_text)
+            is_table = seg_type in ("grid_table", "pipe_table", "math_block")
+            max_limit = self.table_max_chars if is_table else self.prose_max_chars
+
+            if seg_len <= max_limit:
+                for sub in self._fit_byte_limit(
+                    seg_text, doc_id, series, spec_number,
+                    release, parent_id, parent_title,
+                    section_number, section_title, section_path,
+                    idx, doc_type,
+                ):
+                    chunks.append(sub)
+                    idx += 1
+            elif is_table:
+                # 超大表格：按行组拆分（保留表头），复用已有逻辑
+                sub_texts = self._split_oversized(seg_text)
+                for sub_text in sub_texts:
+                    for sub in self._fit_byte_limit(
+                        sub_text, doc_id, series, spec_number,
+                        release, parent_id, parent_title,
+                        section_number, section_title, section_path,
+                        idx, doc_type,
+                    ):
+                        chunks.append(sub)
+                        idx += 1
+            else:
+                # 超长纯文本：段落边界切分
+                paragraphs = seg_text.split("\n\n")
+                buf = ""
+                for para in paragraphs:
+                    para = para.strip()
+                    if not para:
+                        continue
+                    if len(buf) + len(para) <= max_limit:
+                        buf += ("\n\n" if buf else "") + para
+                    else:
+                        if buf.strip():
+                            for sub in self._fit_byte_limit(
+                                buf.strip(), doc_id, series, spec_number,
+                                release, parent_id, parent_title,
+                                section_number, section_title, section_path,
+                                idx, doc_type,
+                            ):
+                                chunks.append(sub)
+                                idx += 1
+                        buf = para
+                if buf.strip():
+                    for sub in self._fit_byte_limit(
+                        buf.strip(), doc_id, series, spec_number,
+                        release, parent_id, parent_title,
+                        section_number, section_title, section_path,
+                        idx, doc_type,
+                    ):
+                        chunks.append(sub)
+
+        return chunks
+
     # ── 字节上限自适应拆分 ──
 
     def _fit_byte_limit(
@@ -328,9 +583,19 @@ class HeaderAwareSplitter:
         start_idx: int,
         doc_type: str = "3gpp",
     ) -> list[Chunk]:
-        """确保 chunk 字节数不超过 max_chunk_bytes, 超限则按内容类型自适应拆分."""
+        """确保 chunk 不超 max_chunk_bytes (Milvus) 且不超 max_chunk_hard (BGE-M3).
+
+        两个硬限制:
+        1. max_chunk_bytes=55000  — Milvus VARCHAR(65535) 安全边距
+        2. max_chunk_hard=8000   — BGE-M3 8192 tokens, 超限静默截断会丢尾部
+
+        超限时按行→句→词边界自适应拆分, 并在子 chunk 间保留 overlap.
+        """
         text_bytes = len(text.encode("utf-8"))
-        if text_bytes <= self.max_chunk_bytes:
+        text_chars = len(text)
+
+        # 两个限制都满足 — 直接返回单 chunk
+        if text_bytes <= self.max_chunk_bytes and text_chars <= self.max_chunk_hard:
             return [Chunk(
                 text=text, embedding=None,
                 doc_id=doc_id, series=series,
@@ -343,11 +608,20 @@ class HeaderAwareSplitter:
                 doc_type=doc_type,
             )]
 
-        logger.info(
-            "chunk 超字节上限 (%dB > %dB), 按内容类型拆分: %s/%s",
-            text_bytes, self.max_chunk_bytes, spec_number, parent_title[:60],
-        )
-        sub_texts = self._split_oversized(text)
+        # 确定触发原因并选择拆分策略
+        if text_chars > self.max_chunk_hard:
+            logger.debug(
+                "chunk 超 BGE-M3 限制 (%d chars > %d), 强制切分: %s/%s",
+                text_chars, self.max_chunk_hard, spec_number, parent_title[:60],
+            )
+            sub_texts = self._split_by_char_limit(text, self.max_chunk_hard)
+        else:
+            logger.info(
+                "chunk 超字节上限 (%dB > %dB), 按内容类型拆分: %s/%s",
+                text_bytes, self.max_chunk_bytes, spec_number, parent_title[:60],
+            )
+            sub_texts = self._split_oversized(text)
+
         return [
             Chunk(
                 text=sub, embedding=None,
@@ -593,6 +867,45 @@ class HeaderAwareSplitter:
             result.append("\n".join(buf))
 
         return result if result else [text]
+
+    def _split_by_char_limit(self, text: str, max_chars: int) -> list[str]:
+        """按字符上限强制切分 — 在最优语义边界切断，保留子 chunk 重叠。
+
+        拆分优先级: 换行 → 句末 (. ) → 分号 (; ) → 空格 → 硬切
+        每个子 chunk 尾部附加 overlap (前一个子 chunk 的后 ~15% 内容)，
+        确保 BGE-M3 嵌入时相邻 chunk 共享上下文信号。
+        """
+        if len(text) <= max_chars:
+            return [text]
+
+        # overlap = max_chars 的 15%，最少 100 chars
+        overlap = max(int(max_chars * 0.15), 100)
+        result: list[str] = []
+        pos = 0
+
+        while pos < len(text):
+            end = min(pos + max_chars, len(text))
+            if end >= len(text):
+                result.append(text[pos:])
+                break
+
+            # 在 (end - overlap, end] 区间找最佳切点
+            window = text[max(pos, end - max_chars // 2):end]
+            # 优先级: 换行 → 句末 → 分句 → 空格
+            cut = -1
+            for sep in ("\n\n", "\n", ". ", "。", "; ", " "):
+                idx = window.rfind(sep)
+                if idx >= 0:
+                    cut = max(pos, end - max_chars // 2) + idx + len(sep)
+                    break
+            if cut < 0:
+                cut = end  # 硬切
+
+            result.append(text[pos:cut])
+            # 下一段起始 = cut - overlap (保留重叠上下文)
+            pos = max(cut - overlap, pos + 1)
+
+        return result
 
     # ── 原子块保护 ──
 

@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from src.api.rest.router import get_pipeline
 from src.api.rest.schemas import APIResponse
-from src.config import settings
+from src.config import settings, ingestion_config
 
 logger = logging.getLogger(__name__)
 
@@ -409,8 +409,8 @@ async def view_config() -> APIResponse[ConfigView]:
         llm_base_url=settings.llm_base_url,
         embedding_device=settings.embedding_device,
         embedding_provider=settings.embedding_provider,
-        chunk_size=settings.chunk_size,
-        chunk_overlap=settings.chunk_overlap,
+        chunk_size=ingestion_config.chunk_size,
+        chunk_overlap=ingestion_config.chunk_overlap,
         dense_top_k=settings.dense_top_k,
         bm25_top_k=settings.bm25_top_k,
         milvus_host=settings.milvus_host,

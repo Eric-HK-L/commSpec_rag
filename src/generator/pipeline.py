@@ -53,7 +53,7 @@ class RAGResponse:
 
 
 class RAGPipeline:
-    """3GPP RAG 查询流水线.
+    """Commspec RAG 查询流水线.
 
     流程: 查询扩展 -> 混合检索 -> RAG 提示词 -> LLM 生成 -> 答案验证
     """
@@ -155,6 +155,10 @@ class RAGPipeline:
             reranker_enabled=reranker_enabled,
         )
 
+        # Step 3.1b: 分类列举查询 → 元数据 boost（authoritative/parameter_table 加权）
+        if _is_taxonomy_query(search_query):
+            results = self._apply_metadata_boost(results)
+
         # 过滤低信息密度章节 (缩写表/参考文献等) — 避免污染 LLM 上下文
         results = _filter_low_quality(results, settings.max_search_results)
         search_dt = time.time() - t_search
@@ -229,8 +233,11 @@ class RAGPipeline:
                 warnings=[],
             )
 
-        # Step 3.9: 相邻 chunk 上下文扩展 — 为每个命中 chunk 拉取同文档前后文
-        self._expand_adjacent_chunks(results)
+        # Step 3.9: 相邻 chunk 上下文扩展 — 分类列举问题扩大范围
+        if _is_taxonomy_query(search_query):
+            self._expand_adjacent_chunks(results, top_n=10, window=3)
+        else:
+            self._expand_adjacent_chunks(results)
 
         # Step 4: 构建 RAG 提示词 (使用英文检索查询, 保证与检索上下文语言一致)
         messages = build_rag_prompt(
@@ -405,6 +412,31 @@ class RAGPipeline:
             r.score = float(s)
         reranked.sort(key=lambda r: r.score, reverse=True)
         return reranked[:top_k]
+
+    def _apply_metadata_boost(
+        self, results: list[RetrievalResult],
+    ) -> list[RetrievalResult]:
+        """按 chunk 元数据加权重新排序.
+
+        - authoritative spec → ×1.3
+        - parameter_table / definition → ×1.2
+        两者可叠加，最大 boost ×1.56
+        """
+        for r in results:
+            boost = 1.0
+            if r.spec_role == "authoritative":
+                boost *= 1.3
+            if r.content_type in ("parameter_table", "definition"):
+                boost *= 1.2
+            if boost > 1.0:
+                r.score = float(r.score) * boost
+                logger.debug(
+                    "元数据 boost: %s %s/%s score=%.3f→%.3f",
+                    r.spec_number, r.spec_role, r.content_type,
+                    r.score / boost, r.score,
+                )
+        results.sort(key=lambda r: r.score, reverse=True)
+        return results
 
     def _get_query_embedding(self, query: str) -> np.ndarray:
         try:

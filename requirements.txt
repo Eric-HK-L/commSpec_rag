@@ -1,4 +1,4 @@
-# ==================== 3GPP RAG 融合项目 — Python 依赖 ====================
+# ==================== CommSpec RAG — Python 依赖 ====================
 # 基于 5 个开源参考项目的依赖整合：
 # Chat3GPP, Telco-RAG, gpp-RAG-app, SpecPilot, 3GPP MCP Server
 

@@ -33,6 +33,10 @@ class SearchResult:
     section_title: str = ""     # 章节标题，如 "UE behaviour"
     section_path: str = ""      # 层级路径，如 "7 Uplink Power control > 7.1 PUSCH > 7.1.1 UE behaviour"
     doc_type: str = "3gpp"      # 文档类型: "3gpp" | "oran"
+    # chunk 元数据（摄入时写入，检索时零推导开销）
+    content_type: str = ""       # "parameter_table" | "definition" | "procedure" | "overview"
+    spec_role: str = ""          # "authoritative" | "supporting" | "overview"
+    topic_domain: str = ""       # "phy_layer" | "mac_layer" | "rrc_layer" | "ran_arch"
 
     def to_context_str(self, index: int = 0) -> str:
         """将检索结果格式化为注入 LLM 上下文的字符串."""
@@ -59,6 +63,10 @@ class Chunk:
     section_title: str = ""     # 章节标题，如 "UE behaviour"
     section_path: str = ""      # 层级路径，如 "7 Uplink Power control > 7.1 PUSCH > 7.1.1 UE behaviour"
     doc_type: str = "3gpp"      # 文档类型: "3gpp" | "oran"
+    # chunk 元数据（摄入时写入，检索时零推导开销）
+    content_type: str = ""       # "parameter_table" | "definition" | "procedure" | "overview"
+    spec_role: str = ""          # "authoritative" | "supporting" | "overview"
+    topic_domain: str = ""       # "phy_layer" | "mac_layer" | "rrc_layer" | "ran_arch"
 
 
 # ═══════════════════════════════════════════════════════════════════════

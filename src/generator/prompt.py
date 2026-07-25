@@ -159,7 +159,13 @@ _TAXONOMY_EXTRA_PROMPT = """
 8. 按层级组织答案：大类→子类→具体条目，使用 Markdown 标题层级（##、###）
 9. 如检索片段包含完整表格数据，优先使用 Markdown 管道表格呈现汇总
 10. 回答末尾附"覆盖清单"：列出已覆盖的条目名称并标注来源章节号
-11. 若检索片段覆盖不全，在末尾明确指出"以下格式未在检索片段中找到"并列出缺失项"""
+11. 若检索片段覆盖不全，在末尾明确指出"以下格式未在检索片段中找到"并列出缺失项
+12. 对每个列举出的格式/类型，必须从检索片段中提取其关键参数
+    （如序列长度、子载波间隔、OFDM符号数、CP长度等），
+    以 Markdown 表格逐项呈现，不要只列名称
+13. 若条目可按功能/结构特征分为子系列（如 A 系列无 GP、B 系列有 GP），
+    按子系列分组说明，并描述各组的设计意图（若检索片段中有相关描述）
+14. 若检索片段包含不同大类之间的差异对比信息，在末尾增加对比总结表"""
 
 
 def build_rag_prompt(
@@ -217,7 +223,9 @@ def build_rag_prompt(
 5. 使用中文回答，但保留规范术语的英文原文（如 PDU Session, N2 Interface）
 6. 回答结构清晰：先给直接答案，再列规范依据
 7. 当回答中包含表格时，必须使用 Markdown 管道表格格式（|列1|列2|），禁止使用 Grid Table（+---+）格式
-8. 回答末尾附 References 表：每行包含 [编号] Section / Section Hierarchy / Cited Content（原文摘录）/ Relevance"""
+8. 回答末尾附 References 表：每行包含 [编号] Section / Section Hierarchy / Cited Content（原文摘录）/ Relevance
+16. 片段来源标注了角色标签：🔴权威定义 > 🟡补充参考 > ⚪概述
+    优先采纳「🔴权威定义」和「📊参数表」类型的片段作为回答的核心依据"""
 
     if _is_taxonomy:
         system_prompt += _TAXONOMY_EXTRA_PROMPT

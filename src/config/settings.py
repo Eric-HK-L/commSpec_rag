@@ -101,8 +101,7 @@ class Settings(BaseSettings):
     milvus_collection_name: str = "TeleComm_specs"
 
     # ── 文档处理 ──
-    chunk_size: int = 512
-    chunk_overlap: int = 50
+    # chunk_size/chunk_overlap 已迁移至 IngestionConfig (摄入管线专用配置)
     documents_dir: str = "data/documents"
 
     # ── 检索 ──
@@ -193,4 +192,31 @@ class Settings(BaseSettings):
         return self.data_abs_dir / "checkpoint" / "chunks_checkpoint.pkl"
 
 
+class IngestionConfig(BaseSettings):
+    """摄入管线配置 — 仅重摄入时生效，修改后必须重跑 bulk_ingest.
+
+    .env 中使用 INGESTION__ 前缀覆盖，如 INGESTION__CHUNK_MODE=dynamic
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore",
+        env_prefix="INGESTION__",
+    )
+
+    # 分块策略
+    chunk_mode: Literal["fixed", "dynamic"] = "dynamic"
+    chunk_size: int = 1024               # fixed 模式的字符上限 (fallback)
+    chunk_overlap: int = 100
+
+    # dynamic 模式 — 内容类型感知上限
+    table_max_chars: int = 5000          # 表格 chunk 上限（比正文更大）
+    prose_max_chars: int = 1500          # 纯文本 chunk 上限
+    max_chunk_chars: int = 8000          # 绝对上限 — BGE-M3 8192 tokens, 留 ~12% 安全边距
+                                         # 超限内容强制在最优边界切开，避免嵌入时静默截断
+
+    # Milvus 写入
+    batch_size: int = 64
+
+
 settings = Settings()
+ingestion_config = IngestionConfig()

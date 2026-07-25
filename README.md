@@ -1,4 +1,4 @@
-# 3GPP RAG — 3GPP 通信标准检索增强生成系统
+# Commspec RAG — 通信协议规范检索增强生成系统
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11%2B-blue?logo=python" alt="Python">
@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/License-BSD--3--Clause-blue.svg" alt="License">
 </p>
 
-面向 **3GPP 通信标准**的专用检索增强生成（RAG）系统，支持中英韩三语智能问答、跨规范引用解析、Release 版本对比与多跳推理。
+面向 **3GPP + O-RAN 通信协议规范**的专用检索增强生成（RAG）系统，支持中英韩三语智能问答、跨规范引用解析、Release 版本对比与多跳推理。
 
 ## ✨ 核心特性
 
@@ -26,7 +26,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                      3GPP RAG Pipeline                          │
+│                      Commspec RAG Pipeline                      │
 ├──────────┬──────────┬──────────┬──────────┬──────────┬─────────┤
 │ Step 0   │ Step 1   │ Step 3   │ Step 3.2 │ Step 3.5 │ Step 3.7│
 │ 多语言   │ 查询扩展 │ 混合检索 │ 多跳检索 │ 交叉引用 │ Release │
@@ -49,7 +49,7 @@
 ## 📁 目录结构
 
 ```
-3GPP_RAG_project/
+commspec_rag_project/
 ├── src/
 │   ├── config/             # pydantic-settings 配置
 │   ├── ingestion/          # 文档摄取（extractor, splitter, embedder, manifest）
@@ -93,8 +93,8 @@
 ### 1. 克隆与安装
 
 ```bash
-git clone https://github.com/Eric-HK-L/3GPP_RAG_project.git
-cd 3GPP_RAG_project
+git clone https://github.com/Eric-HK-L/commspec_rag_project.git
+cd commspec_rag_project
 
 # Python 虚拟环境
 python -m venv .venv
@@ -125,7 +125,7 @@ docker compose up -d
 
 ### 4. 准备文档
 
-将 3GPP R18 规范 `.docx` 文件放入 `data/documents/R18/<series>/`：
+将 3GPP R18 + O-RAN 规范 `.docx` 文件放入 `data/documents/R18/<series>/`：
 
 ```
 data/documents/R18/

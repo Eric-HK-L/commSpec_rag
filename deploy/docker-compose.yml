@@ -70,7 +70,7 @@ services:
   #   build:
   #     context: .
   #     dockerfile: deploy/Dockerfile
-  #   image: 3gpp-rag:latest
+  #   image: commspec-rag:latest
   #   command: ["python", "-m", "src.cli", "import"]
   #   ...
 
@@ -78,7 +78,7 @@ services:
     build:
       context: .
       dockerfile: deploy/Dockerfile
-    image: 3gpp-rag:latest
+    image: commspec-rag:latest
     command: ["python", "-m", "src.main"]
     ports:
       - "8000:8000"
@@ -108,7 +108,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.frontend
-    image: 3gpp-rag-frontend:latest
+    image: commspec-rag-frontend:latest
     ports:
       - "3000:3000"
     environment:

@@ -27,7 +27,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.config import settings  # noqa: E402
+from src.config import settings, ingestion_config  # noqa: E402
 from src.ingestion.embedder import BatchEmbedder  # noqa: E402
 from src.ingestion.embedding_cache import EmbeddingCache  # noqa: E402
 from src.ingestion.extractor import DoclingExtractor  # noqa: E402
@@ -37,7 +37,7 @@ from src.ingestion.manifest import (  # noqa: E402
     parse_3gpp_version,
 )
 from src.ingestion.mps_embedder import MPSChunkedEmbedder  # noqa: E402
-from src.ingestion.splitter import HeaderAwareSplitter  # noqa: E402
+from src.ingestion.splitter import HeaderAwareSplitter, classify_chunk  # noqa: E402
 from src.retriever.milvus_store import MilvusStore  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -256,6 +256,12 @@ def process_single_docx(
         "doc_type": doc_type,
     }
     chunks = splitter.split_document(result.markdown, doc_meta)
+    # Annotate each chunk with rule-based metadata (content_type, spec_role, topic_domain)
+    for chunk in chunks:
+        meta = classify_chunk(chunk.text, spec_number, chunk.parent_title)
+        chunk.content_type = meta["content_type"]
+        chunk.spec_role = meta["spec_role"]
+        chunk.topic_domain = meta["topic_domain"]
     return chunks, spec_number, release, version, sha
 
 
@@ -653,7 +659,15 @@ def main():
         return
 
     extractor = DoclingExtractor()
-    splitter = HeaderAwareSplitter(max_chunk_chars=2500, chunk_overlap_chars=100)
+    splitter = HeaderAwareSplitter(
+        max_chunk_chars=ingestion_config.chunk_size,
+        chunk_overlap_chars=ingestion_config.chunk_overlap,
+        max_chunk_bytes=55000,
+        chunk_mode=ingestion_config.chunk_mode,  # type: ignore[arg-type]
+        table_max_chars=ingestion_config.table_max_chars,
+        prose_max_chars=ingestion_config.prose_max_chars,
+        max_chunk_hard_chars=ingestion_config.max_chunk_chars,
+    )
     manifest = IngestionManifest()
     manifest.load()
 

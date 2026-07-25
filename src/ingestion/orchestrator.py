@@ -15,11 +15,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from src.config import settings
+from src.config import settings, ingestion_config
 from src.ingestion.embedder import BatchEmbedder
 from src.ingestion.embedding_cache import EmbeddingCache
 from src.ingestion.extractor import DoclingExtractor, ExtractionResult
-from src.ingestion.splitter import HeaderAwareSplitter
+from src.ingestion.splitter import HeaderAwareSplitter, classify_chunk
 from src.retriever.vector_store import Chunk, VectorStore
 
 logger = logging.getLogger(__name__)
@@ -62,8 +62,13 @@ class IngestionOrchestrator:
         self._on_step = on_step
 
         self._splitter = HeaderAwareSplitter(
-            max_chunk_chars=getattr(settings, "chunk_size", 2500),
-            chunk_overlap_chars=getattr(settings, "chunk_overlap", 100),
+            max_chunk_chars=ingestion_config.chunk_size,
+            chunk_overlap_chars=ingestion_config.chunk_overlap,
+            max_chunk_bytes=55000,
+            chunk_mode=ingestion_config.chunk_mode,  # type: ignore[arg-type]
+            table_max_chars=ingestion_config.table_max_chars,
+            prose_max_chars=ingestion_config.prose_max_chars,
+            max_chunk_hard_chars=ingestion_config.max_chunk_chars,
         )
 
     # ── 全流程 ──
@@ -180,6 +185,12 @@ class IngestionOrchestrator:
                 "release": r.release,
             }
             chunks = self._splitter.split_document(r.markdown, doc_meta)
+            # 为每个 chunk 标注元数据
+            for c in chunks:
+                meta = classify_chunk(c.text, c.spec_number, c.parent_title)
+                c.content_type = meta["content_type"]
+                c.spec_role = meta["spec_role"]
+                c.topic_domain = meta["topic_domain"]
             all_chunks.extend(chunks)
         return all_chunks
 

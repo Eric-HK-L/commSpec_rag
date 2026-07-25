@@ -1,4 +1,4 @@
-"""3GPP RAG 融合项目 — 统一服务入口."""
+"""CommSpec RAG — 统一服务入口."""
 
 from __future__ import annotations
 
