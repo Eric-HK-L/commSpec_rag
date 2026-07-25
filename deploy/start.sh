@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# ── Commspec RAG 全栈启动脚本 ──
+# ── CommSpec RAG 全栈启动脚本 ──
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$SCRIPT_DIR"
 
-echo "=== Commspec RAG 全栈启动 ==="
+echo "=== CommSpec RAG 全栈启动 ==="
 echo ""
 
 # 1. 检查 Docker

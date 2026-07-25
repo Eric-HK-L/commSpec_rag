@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ==================== Commspec RAG — 离线环境一键安装 ====================
+# ==================== CommSpec RAG — 离线环境一键安装 ====================
 #
 # 用法:
 #   bash scripts/install_offline.sh                       # 自动检测平台
@@ -35,7 +35,7 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()  { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
 echo "=========================================================="
-echo "  Commspec RAG — 离线环境安装"
+echo "  CommSpec RAG — 离线环境安装"
 echo "=========================================================="
 
 # ── 0. 检测平台 ──
@@ -179,7 +179,7 @@ if [ ! -f "$PROJECT_ROOT/.env" ]; then
     esac
 
     cat > "$PROJECT_ROOT/.env" << ENVEOF
-# Commspec RAG — 离线环境配置
+# CommSpec RAG — 离线环境配置
 # 由 install_offline.sh 自动生成 ($(date))
 
 # LLM (填写公司内网 API 地址)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ── Commspec RAG 一键启动脚本（根目录） ──
+# ── CommSpec RAG 一键启动脚本（根目录） ──
 # 用法: ./start.sh
 # 从电脑初开机状态，一键启动前后端 + Docker 基础设施
 set -euo pipefail
@@ -16,7 +16,7 @@ FRONTEND_LOG="$PID_DIR/frontend.log"
 mkdir -p "$PID_DIR"
 
 echo "========================================"
-echo "  Commspec RAG 一键启动"
+echo "  CommSpec RAG 一键启动"
 echo "========================================"
 echo ""
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# ── Commspec RAG 全栈停止脚本 ──
+# ── CommSpec RAG 全栈停止脚本 ──
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 cd "$SCRIPT_DIR"
 
-echo "=== 停止 Commspec RAG 全栈服务 ==="
+echo "=== 停止 CommSpec RAG 全栈服务 ==="
 docker compose down --remove-orphans
 echo "✅ 全部服务已停止"
 echo ""

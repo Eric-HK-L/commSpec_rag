@@ -1,4 +1,4 @@
-# Commspec RAG — 通信协议规范检索增强生成系统
+# CommSpec RAG — 通信协议规范检索增强生成系统
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11%2B-blue?logo=python" alt="Python">
@@ -26,7 +26,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                      Commspec RAG Pipeline                      │
+│                      CommSpec RAG Pipeline                      │
 ├──────────┬──────────┬──────────┬──────────┬──────────┬─────────┤
 │ Step 0   │ Step 1   │ Step 3   │ Step 3.2 │ Step 3.5 │ Step 3.7│
 │ 多语言   │ 查询扩展 │ 混合检索 │ 多跳检索 │ 交叉引用 │ Release │

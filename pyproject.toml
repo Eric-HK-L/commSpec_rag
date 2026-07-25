@@ -14,7 +14,7 @@ readme = "README.md"
 license = {text = "BSD-3-Clause"}
 requires-python = ">=3.11"
 authors = [
-    {name = "Commspec RAG Project Contributors"},
+    {name = "CommSpec RAG Project Contributors"},
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

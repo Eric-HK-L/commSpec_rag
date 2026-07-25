@@ -53,7 +53,7 @@ class RAGResponse:
 
 
 class RAGPipeline:
-    """Commspec RAG 查询流水线.
+    """CommSpec RAG 查询流水线.
 
     流程: 查询扩展 -> 混合检索 -> RAG 提示词 -> LLM 生成 -> 答案验证
     """
