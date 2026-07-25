@@ -621,7 +621,7 @@ def embed_and_insert(
 # ── 入口 ──
 
 def main():
-    parser = argparse.ArgumentParser(description="3GPP 规范摄入脚本")
+    parser = argparse.ArgumentParser(description="CommSpec RAG 规范摄入脚本")
     parser.add_argument(
         "--full-rebuild",
         action="store_true",
