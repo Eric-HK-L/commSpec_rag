@@ -55,7 +55,7 @@ jobs:
       - name: Check import integrity
         run: |
           python -c "
-from src.generator.prompt import build_rag_prompt, TAXONOMY_EXTRA_PROMPT
+from src.generator.prompt import build_rag_prompt, _TAXONOMY_EXTRA_PROMPT
 from src.generator.i18n import detect_language
 from src.retriever.cross_ref import extract_references
 from src.retriever.search import RetrievalResult

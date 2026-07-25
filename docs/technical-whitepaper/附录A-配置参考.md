@@ -47,10 +47,22 @@ tags: [config, env, reference]
 ### 文档处理
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `CHUNK_SIZE` | `512` | 分块字符数上限 |
-| `CHUNK_OVERLAP` | `50` | 分块重叠字符数 |
 | `DOCUMENTS_DIR` | `data/documents` | 文档源目录 |
 | `DATA_DIR` | `data` | 数据根目录 |
+
+### 摄入分块 (Phase 5 新增 — INGESTION__ 前缀)
+
+以下配置仅重摄入 (`bulk_ingest.py`) 时生效，修改后必须重新执行摄入。
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `INGESTION__CHUNK_MODE` | `dynamic` | `fixed` (段落累计) / `dynamic` (表格/正文分离) |
+| `INGESTION__CHUNK_SIZE` | `1024` | fixed 模式的字符上限 (fallback) |
+| `INGESTION__CHUNK_OVERLAP` | `100` | 分块重叠字符数 |
+| `INGESTION__TABLE_MAX_CHARS` | `5000` | dynamic 模式下表格 chunk 上限 |
+| `INGESTION__PROSE_MAX_CHARS` | `1500` | dynamic 模式下纯文本 chunk 上限 |
+| `INGESTION__MAX_CHUNK_CHARS` | `8000` | BGE-M3 8192 token 安全上限 |
+| `INGESTION__BATCH_SIZE` | `64` | Milvus 写入批大小 |
 
 ### 检索
 | 变量 | 默认值 | 说明 |

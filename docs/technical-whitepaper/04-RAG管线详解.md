@@ -56,6 +56,37 @@ results = self._retriever.search(expanded_query, query_embedding)
 - 融合得分 = 1/(60+dense_rank) + 1/(60+bm25_rank)
 - k=60 的经验值，可调
 
+### Step 3.1: 分类列举查询 — 多角度分解检索 (Phase 5 新增)
+```python
+if _is_taxonomy_query(search_query):
+    results = self._taxonomy_decompose_search(search_query, query_embedding, results)
+```
+- 触发条件：查询含 "格式/分类/种类/列出/汇总" 等关键词
+- LLM 将问题分解为 3-5 个子查询（每个覆盖一个类别维度）
+- 子查询并行搜索，结果合并去重（原始结果排前，子查询补充追加后）
+- 确保分类列举类问题覆盖所有维度，不遗漏任何格式/类型
+
+### Step 3.1b: 元数据加权 boost (Phase 5 新增)
+```python
+if _is_taxonomy_query(search_query):
+    results = self._apply_metadata_boost(results)
+```
+- authoritative spec → ×1.3
+- parameter_table / definition → ×1.2
+- 两者可叠加，最大 boost ×1.56
+- 优先展示物理层权威定义和参数表类型的 chunk
+
+### Step 3.9: 相邻 chunk 上下文扩展 (Phase 5 新增)
+```python
+if _is_taxonomy_query(search_query):
+    self._expand_adjacent_chunks(results, top_n=10, window=3)
+else:
+    self._expand_adjacent_chunks(results)  # top_n=5, window=2
+```
+- 为 Top-N 命中 chunk 拉取同文档相邻 chunk (±window)
+- 分类列举问题扩大范围 (top_n=10, window=3)，解决表格/列表碎片化导致的召回不完整
+- 相邻文本存入 `adjacent_chunks` 字段，拼入 LLM 上下文
+
 ### Step 3.2: 多跳检索 (条件触发)
 ```python
 if needs_multi_hop(results):
