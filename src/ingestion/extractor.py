@@ -35,7 +35,7 @@ class ExtractionResult:
 
 
 class DoclingExtractor:
-    """使用 pandoc 将 3GPP DOCX 规范转换为 Markdown.
+    """使用 pandoc 将 3GPP/O-RAN DOCX 规范转换为 Markdown.
 
     pandoc 相比 mammoth 的核心优势:
     - 表格 → Grid Table (行列结构完整, 不会被 chunker 切散)
@@ -47,6 +47,13 @@ class DoclingExtractor:
     # 3GPP 文件名模式: 38xxx-xx.docx 或 38xxx-xx_iXX.docx
     # 前三段: series+spec, release_minor, version_or_info
     SPEC_PATTERN = re.compile(r"^(\d{2})(\d{3})-(\d{2})([a-z]\d{2})?", re.IGNORECASE)
+
+    # O-RAN 文件名模式: O-RAN.WG{1-9}.{SPEC}.{num}-R{rev}-v{major}.{minor}.docx
+    # 示例: O-RAN.WG1.CUS.0-R003-v11.00.docx → spec=O-RAN.WG1.CUS.0, version=v11.00
+    ORAN_PATTERN = re.compile(
+        r"^O-RAN\.WG(\d+)\.(\w+(?:\.\w+)*)-(R\d+)-(v\d+\.\d+)",
+        re.IGNORECASE,
+    )
 
     # 文档头信息正则 (多种变体):
     #   主格式: TS 38.300 V18.4.0 (2024-09)
@@ -210,6 +217,34 @@ class DoclingExtractor:
         spec = f"{digits[0:2]}.{digits[2:5]}"
         # Release 不从文件名推断 — 文件名中的数字是内部版本号, 非 3GPP Release
         return spec, "", ""
+
+    @staticmethod
+    def parse_oran_filename(filename: str) -> tuple[str, str, str]:
+        """从 O-RAN DOCX 文件名提取 spec_number 和 version.
+
+        O-RAN 命名规则: O-RAN.WG{d}.{SPEC}.{num}-R{rev}-v{major}.{minor}.docx
+        示例:
+          O-RAN.WG1.CUS.0-R003-v11.00.docx → spec=O-RAN.WG1.CUS.0, release=v11.00
+          O-RAN.WG4.CUS.0-R003-v07.00.docx → spec=O-RAN.WG4.CUS.0, release=v07.00
+
+        Returns:
+            (spec_number, release, version) — release 从 v 版本号推断
+        """
+        stem = Path(filename).stem
+        m = DoclingExtractor.ORAN_PATTERN.match(stem)
+        if not m:
+            return "", "", ""
+        wg_num = m.group(1)
+        interface = m.group(2)
+        revision = m.group(3)  # R003
+        version = m.group(4)   # v11.00
+
+        # 构建 O-RAN 规范编号
+        spec_id = f"O-RAN.WG{wg_num}.{interface}"
+
+        # ORAN 的 release 用版本号表示
+        release = version  # v11.00
+        return spec_id, release, version
 
     @staticmethod
     def _parse_text_header(md_text: str) -> tuple[str, str, str]:

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { getDocuments, getStats, type DocumentItem, type SystemStats } from "@/lib/api";
 
 export default function DocumentsPage() {
@@ -36,7 +37,16 @@ export default function DocumentsPage() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">3GPP 规范文档</h1>
+      {/* 导航 */}
+      <div className="flex items-center gap-4">
+        <Link
+          href="/"
+          className="inline-flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+        >
+          <span className="text-lg leading-none">←</span> 返回首页
+        </Link>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">3GPP 规范文档</h1>
+      </div>
 
       {/* 统计栏 */}
       {stats && (

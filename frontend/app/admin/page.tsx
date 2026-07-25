@@ -70,10 +70,10 @@ export default function AdminDashboard() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
             <MiniBadge
               label="内存"
-              value={`${sysInfo.memory_used_mb.toFixed(0)} / ${sysInfo.memory_total_mb.toFixed(0)} MB`}
+              value={`${(sysInfo.memory_used_mb / 1024).toFixed(2)} / ${(sysInfo.memory_total_mb / 1024).toFixed(2)} GB`}
               color={sysInfo.memory_percent > 80 ? "red" : sysInfo.memory_percent > 60 ? "yellow" : "green"}
             />
-            <MiniBadge label="磁盘" value={`${sysInfo.disk_used_gb} / ${sysInfo.disk_total_gb} GB`} color="gray" />
+            <MiniBadge label="磁盘" value={`${sysInfo.disk_used_gb.toFixed(2)} / ${sysInfo.disk_total_gb.toFixed(2)} GB`} color="gray" />
             <MiniBadge label="Milvus" value={sysInfo.milvus_connected ? "✅ 已连接" : "❌ 断开"} color={sysInfo.milvus_connected ? "green" : "red"} />
             <MiniBadge label="Python" value={sysInfo.python_version} color="gray" />
           </div>

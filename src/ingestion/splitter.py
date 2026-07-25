@@ -83,14 +83,15 @@ class HeaderAwareSplitter:
         series = doc_meta.get("series", 0)
         spec_number = doc_meta.get("spec_number", "")
         release = doc_meta.get("release", "")
+        doc_type = doc_meta.get("doc_type", "3gpp")
 
         # 构建章节树
         root = self._build_section_tree(text)
         if root.children:
-            chunks = self._split_by_tree(text, root, doc_id, series, spec_number, release)
+            chunks = self._split_by_tree(text, root, doc_id, series, spec_number, release, doc_type)
         else:
             # 无标题 → 降级为字符分块
-            chunks = self._split_by_chars(text, doc_id, series, spec_number, release)
+            chunks = self._split_by_chars(text, doc_id, series, spec_number, release, doc_type)
 
         return chunks
 
@@ -155,6 +156,7 @@ class HeaderAwareSplitter:
         series: int,
         spec_number: str,
         release: str,
+        doc_type: str = "3gpp",
     ) -> list[Chunk]:
         """从章节树叶子节点切分 chunk."""
         chunks: list[Chunk] = []
@@ -167,6 +169,9 @@ class HeaderAwareSplitter:
                 continue
 
             parent_id, parent_title = self._get_parent_context(node)
+            section_number = node.sec_id
+            section_title = node.title
+            section_path = self._build_section_path(node)
 
             if len(content) <= self.max_chunk:
                 chunks.append(Chunk(
@@ -179,12 +184,18 @@ class HeaderAwareSplitter:
                     parent_section_id=parent_id,
                     parent_title=parent_title,
                     chunk_index=chunk_idx,
+                    section_number=section_number,
+                    section_title=section_title,
+                    section_path=section_path,
+                    doc_type=doc_type,
                 ))
                 chunk_idx += 1
             else:
                 sub_chunks = self._split_long_section(
                     content, doc_id, series, spec_number,
-                    release, parent_id, parent_title, chunk_idx,
+                    release, parent_id, parent_title,
+                    section_number, section_title, section_path,
+                    chunk_idx, doc_type,
                 )
                 chunks.extend(sub_chunks)
                 chunk_idx += len(sub_chunks)
@@ -216,6 +227,21 @@ class HeaderAwareSplitter:
         parent_title = " > ".join(reversed(titles)) if titles else ""
         return parent_id, parent_title
 
+    @staticmethod
+    def _build_section_path(node: SectionNode) -> str:
+        """构建从根到当前节点的完整层级路径.
+
+        如 "7 Uplink Power control > 7.1 PUSCH > 7.1.1 UE behaviour"
+        """
+        parts: list[str] = []
+        current: SectionNode | None = node
+        while current and current.level > 0:
+            label = f"{current.sec_id} {current.title}".strip() if current.sec_id else current.title
+            parts.append(label)
+            current = current.parent
+        parts.reverse()
+        return " > ".join(parts)
+
     # ── 长章节二次切分（结构感知） ──
 
     def _split_long_section(
@@ -227,7 +253,11 @@ class HeaderAwareSplitter:
         release: str,
         parent_id: str,
         parent_title: str,
+        section_number: str,
+        section_title: str,
+        section_path: str,
         start_idx: int,
+        doc_type: str = "3gpp",
     ) -> list[Chunk]:
         """对超长文本在段落边界二次切分 — 表格/公式原子化保护 + 字节上限自适应.
 
@@ -261,7 +291,9 @@ class HeaderAwareSplitter:
                     chunk_text = self._restore_atomic_blocks(buffer.strip(), placeholder_map)
                     for sub in self._fit_byte_limit(
                         chunk_text, doc_id, series, spec_number,
-                        release, parent_id, parent_title, idx,
+                        release, parent_id, parent_title,
+                        section_number, section_title, section_path,
+                        idx, doc_type,
                     ):
                         chunks.append(sub)
                         idx += 1
@@ -271,7 +303,9 @@ class HeaderAwareSplitter:
             chunk_text = self._restore_atomic_blocks(buffer.strip(), placeholder_map)
             for sub in self._fit_byte_limit(
                 chunk_text, doc_id, series, spec_number,
-                release, parent_id, parent_title, idx,
+                release, parent_id, parent_title,
+                section_number, section_title, section_path,
+                idx, doc_type,
             ):
                 chunks.append(sub)
 
@@ -288,7 +322,11 @@ class HeaderAwareSplitter:
         release: str,
         parent_id: str,
         parent_title: str,
+        section_number: str,
+        section_title: str,
+        section_path: str,
         start_idx: int,
+        doc_type: str = "3gpp",
     ) -> list[Chunk]:
         """确保 chunk 字节数不超过 max_chunk_bytes, 超限则按内容类型自适应拆分."""
         text_bytes = len(text.encode("utf-8"))
@@ -299,6 +337,10 @@ class HeaderAwareSplitter:
                 spec_number=spec_number, release=release,
                 parent_section_id=parent_id, parent_title=parent_title,
                 chunk_index=start_idx,
+                section_number=section_number,
+                section_title=section_title,
+                section_path=section_path,
+                doc_type=doc_type,
             )]
 
         logger.info(
@@ -313,6 +355,10 @@ class HeaderAwareSplitter:
                 spec_number=spec_number, release=release,
                 parent_section_id=parent_id, parent_title=parent_title,
                 chunk_index=start_idx + i,
+                section_number=section_number,
+                section_title=section_title,
+                section_path=section_path,
+                doc_type=doc_type,
             )
             for i, sub in enumerate(sub_texts)
         ]
@@ -649,6 +695,7 @@ class HeaderAwareSplitter:
         series: int,
         spec_number: str,
         release: str,
+        doc_type: str = "3gpp",
     ) -> list[Chunk]:
         """无标题时的固定窗口字符分块 (兼容 Phase 1).
 
@@ -676,6 +723,7 @@ class HeaderAwareSplitter:
                 spec_number=spec_number, release=release,
                 parent_section_id="", parent_title="",
                 chunk_index=idx,
+                doc_type=doc_type,
             ))
             idx += 1
             start = end - overlap

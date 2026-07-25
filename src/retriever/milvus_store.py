@@ -168,6 +168,10 @@ class MilvusStore(VectorStore):
             FieldSchema(name="parent_section_id", dtype=DataType.VARCHAR, max_length=256),
             FieldSchema(name="parent_title", dtype=DataType.VARCHAR, max_length=1024),
             FieldSchema(name="chunk_index", dtype=DataType.INT64),
+            FieldSchema(name="section_number", dtype=DataType.VARCHAR, max_length=64),
+            FieldSchema(name="section_title", dtype=DataType.VARCHAR, max_length=512),
+            FieldSchema(name="section_path", dtype=DataType.VARCHAR, max_length=1024),
+            FieldSchema(name="doc_type", dtype=DataType.VARCHAR, max_length=32),
         ]
 
         schema = CollectionSchema(fields, description="3GPP 规范检索集合 (Dense)")
@@ -239,6 +243,10 @@ class MilvusStore(VectorStore):
             [],  # parent_section_id
             [],  # parent_title
             [],  # chunk_index
+            [],  # section_number
+            [],  # section_title
+            [],  # section_path
+            [],  # doc_type
         ]
 
         for c in chunks:
@@ -252,6 +260,10 @@ class MilvusStore(VectorStore):
             data[6].append(c.parent_section_id[:256] if c.parent_section_id else "")
             data[7].append(c.parent_title[:1024] if c.parent_title else "")
             data[8].append(c.chunk_index)
+            data[9].append(c.section_number[:64] if c.section_number else "")
+            data[10].append(c.section_title[:512] if c.section_title else "")
+            data[11].append(c.section_path[:1024] if c.section_path else "")
+            data[12].append(c.doc_type[:32] if c.doc_type else "3gpp")
 
         try:
             self._collection.insert(data)
@@ -300,23 +312,40 @@ class MilvusStore(VectorStore):
         if self._collection is None:
             return 0
 
-        try:
-            results = self._collection.query(
-                expr="id >= 0",
-                output_fields=["text", "doc_id", "spec_number", "chunk_index"],
-                limit=300000,
-            )
-        except MilvusException as e:
-            logger.error("BM25 重建查询失败: %s", e)
-            return 0
+        texts: list[str] = []
+        doc_ids: list[str] = []
+        spec_numbers: list[str] = []
+        chunk_indices: list[int] = []
+        batch_size = 8000
+        last_id = -1
 
-        if not results:
-            return 0
+        while True:
+            try:
+                results = self._collection.query(
+                    expr=f"id > {last_id}",
+                    output_fields=["id", "text", "doc_id", "spec_number", "chunk_index"],
+                    limit=batch_size,
+                )
+            except MilvusException as e:
+                logger.error("BM25 重建查询失败: %s", e)
+                if not texts:
+                    return 0
+                break
 
-        texts = [str(r.get("text", "")) for r in results]
-        doc_ids = [str(r.get("doc_id", "")) for r in results]
-        spec_numbers = [str(r.get("spec_number", "")) for r in results]
-        chunk_indices = [int(r.get("chunk_index", 0)) for r in results]
+            if not results:
+                break
+
+            texts.extend(str(r.get("text", "")) for r in results)
+            doc_ids.extend(str(r.get("doc_id", "")) for r in results)
+            spec_numbers.extend(str(r.get("spec_number", "")) for r in results)
+            chunk_indices.extend(int(r.get("chunk_index", 0)) for r in results)
+            last_id = results[-1]["id"]
+
+            if len(results) < batch_size:
+                break
+
+        if not texts:
+            return 0
 
         self.build_bm25(texts, doc_ids, spec_numbers, chunk_indices)
         logger.info("BM25 索引已从 collection 重建 (%d 条)", len(texts))
@@ -358,6 +387,8 @@ class MilvusStore(VectorStore):
             "output_fields": [
                 "text", "doc_id", "series", "spec_number",
                 "release", "parent_section_id", "parent_title", "chunk_index",
+                "section_number", "section_title", "section_path",
+                "doc_type",
             ],
         }
         if filter_expr:
@@ -379,6 +410,10 @@ class MilvusStore(VectorStore):
                     parent_section_id=entity.get("parent_section_id", ""),
                     parent_title=entity.get("parent_title", ""),
                     chunk_index=entity.get("chunk_index", 0),
+                    section_number=entity.get("section_number", ""),
+                    section_title=entity.get("section_title", ""),
+                    section_path=entity.get("section_path", ""),
+                    doc_type=entity.get("doc_type", "3gpp"),
                 ))
         return output
 
@@ -417,16 +452,25 @@ class MilvusStore(VectorStore):
         dense_top_k: int = 100,
         sparse_top_k: int = 100,
         final_top_k: int = 10,
+        filter_expr: str | None = None,
     ) -> list[SearchResult]:
-        """Dense + BM25 混合检索，Python 侧 RRF 融合。"""
+        """Dense + BM25 混合检索，Python 侧 RRF 融合。
+
+        注意: BM25 (Python rank-bm25) 不支持 Milvus 标量过滤。
+        当有 filter_expr 时跳过 BM25，仅 Dense 检索以保证过滤正确性。
+        """
         self._ensure_connected()
         if self._collection is None:
             return []
 
-        # 1. Dense 检索 (Milvus)
-        dense_results = self.search_dense(query_embedding, dense_top_k)
+        # 1. Dense 检索 (Milvus, 支持标量过滤)
+        dense_results = self.search_dense(query_embedding, dense_top_k, filter_expr=filter_expr)
 
-        # 2. BM25 检索 (Python)
+        # 有过滤条件时跳过 BM25 (BM25 不支持 doc_type/release/series 过滤)
+        if filter_expr:
+            return dense_results[:final_top_k]
+
+        # 2. BM25 检索 (Python, 无过滤)
         sparse_results = self.search_sparse(query_text, sparse_top_k)
 
         if not sparse_results:
@@ -507,6 +551,7 @@ class MilvusStore(VectorStore):
                     parent_section_id=r.parent_section_id,
                     parent_title=r.parent_title,
                     chunk_index=r.chunk_index,
+                    doc_type=r.doc_type,
                 ))
             elif key in sparse_map:
                 r = sparse_map[key]
@@ -518,6 +563,7 @@ class MilvusStore(VectorStore):
                     spec_number=r.spec_number,
                     chunk_index=r.chunk_index,
                     series=r.series,
+                    doc_type=r.doc_type,
                 ))
 
         return results
@@ -550,31 +596,43 @@ class MilvusStore(VectorStore):
         if self._collection is None:
             return {}
 
-        try:
-            results = self._collection.query(
-                expr="id >= 0",
-                output_fields=["doc_id", "spec_number", "release", "series", "parent_title"],
-                limit=300000,
-            )
-        except MilvusException as e:
-            logger.error("查询文档摘要失败: %s", e)
-            return {}
-
         doc_map: dict[str, dict] = {}
-        for r in results:
-            doc_id = str(r.get("doc_id", ""))
-            if not doc_id:
-                continue
-            if doc_id not in doc_map:
-                doc_map[doc_id] = {
-                    "doc_id": doc_id,
-                    "spec_number": str(r.get("spec_number", "")),
-                    "release": str(r.get("release", "")),
-                    "title": str(r.get("parent_title", "")),
-                    "series": int(r.get("series", 0)),
-                    "chunk_count": 0,
-                }
-            doc_map[doc_id]["chunk_count"] += 1
+        batch_size = 8000
+        last_id = -1
+
+        while True:
+            try:
+                results = self._collection.query(
+                    expr=f"id > {last_id}",
+                    output_fields=["id", "doc_id", "spec_number", "release", "series", "parent_title", "doc_type"],
+                    limit=batch_size,
+                )
+            except MilvusException as e:
+                logger.error("查询文档摘要失败: %s", e)
+                return {} if not doc_map else doc_map
+
+            if not results:
+                break
+
+            for r in results:
+                doc_id = str(r.get("doc_id", ""))
+                if not doc_id:
+                    continue
+                if doc_id not in doc_map:
+                    doc_map[doc_id] = {
+                        "doc_id": doc_id,
+                        "spec_number": str(r.get("spec_number", "")),
+                        "release": str(r.get("release", "")),
+                        "title": str(r.get("parent_title", "")),
+                        "series": int(r.get("series", 0)),
+                        "doc_type": str(r.get("doc_type", "3gpp")),
+                        "chunk_count": 0,
+                    }
+                doc_map[doc_id]["chunk_count"] += 1
+
+            last_id = results[-1]["id"]
+            if len(results) < batch_size:
+                break
 
         return doc_map
 
@@ -603,3 +661,56 @@ class MilvusStore(VectorStore):
             return []
 
         return sorted(results, key=lambda r: int(r.get("chunk_index", 0)))
+
+    def get_adjacent_chunks(
+        self, doc_id: str, chunk_index: int, window: int = 2,
+    ) -> list[SearchResult]:
+        """获取同一文档中指定 chunk 的相邻 chunks.
+
+        Args:
+            doc_id: 文档标识符.
+            chunk_index: 目标 chunk 序号.
+            window: 左右各取 window 个相邻 chunk.
+
+        Returns:
+            相邻 chunk 列表 (排除目标 chunk 自身), 按 chunk_index 排序.
+        """
+        self._ensure_connected()
+        if self._collection is None:
+            return []
+
+        lo = chunk_index - window
+        hi = chunk_index + window
+        try:
+            results = self._collection.query(
+                expr=(
+                    f"doc_id == '{_escape_milvus_expr(doc_id)}'"
+                    f" and chunk_index >= {lo}"
+                    f" and chunk_index <= {hi}"
+                    f" and chunk_index != {chunk_index}"
+                ),
+                output_fields=["text", "spec_number", "release", "series",
+                               "parent_section_id", "parent_title", "chunk_index"],
+                limit=window * 2 + 2,
+            )
+        except MilvusException as e:
+            logger.warning("查询相邻 chunk 失败 (doc=%s idx=%d): %s", doc_id, chunk_index, e)
+            return []
+
+        # 转换为 SearchResult 并按 chunk_index 排序
+        adjacent: list[SearchResult] = []
+        for row in results:
+            adjacent.append(SearchResult(
+                chunk_id=row.get("id", row.get("chunk_index", 0)),
+                text=row.get("text", ""),
+                score=0.0,
+                doc_id=row.get("doc_id", doc_id),
+                series=row.get("series", 0),
+                spec_number=row.get("spec_number", ""),
+                release=row.get("release", ""),
+                parent_section_id=row.get("parent_section_id", ""),
+                parent_title=row.get("parent_title", ""),
+                chunk_index=row.get("chunk_index", 0),
+            ))
+        adjacent.sort(key=lambda r: r.chunk_index)
+        return adjacent

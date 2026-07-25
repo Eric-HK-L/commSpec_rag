@@ -75,7 +75,14 @@ def parse_spec_from_stem(stem: str) -> tuple[str, str | None]:
       "38533-i80_s00-s04"    → ("38.533", "i80")    # 分卷文档 (多段范围)
       "38133-ie0_sA.1-A.3"   → ("38.133", "ie0")    # Annex 分卷
       "cover"                → ("", None)
+    O-RAN 格式:
+      "O-RAN.WG1.CUS.0-R003-v11.00" → ("O-RAN.WG1.CUS.0", "v11.00")
     """
+    # O-RAN 文件检测
+    if stem.upper().startswith("O-RAN"):
+        from src.ingestion.extractor import DoclingExtractor
+        spec_id, release, version = DoclingExtractor.parse_oran_filename(stem + ".docx")
+        return (spec_id, version) if spec_id else ("", version if version else None)
     # 1. 先去分卷后缀 (必须在提取版本前完成，否则 _s05 被误认为版本)
     base = _SECTION_SUFFIX_RE.sub("", stem)
 
@@ -106,20 +113,45 @@ def parse_spec_from_stem(stem: str) -> tuple[str, str | None]:
     return "", version
 
 
-def find_docx_files(doc_dir: str) -> list[Path]:
+def find_docx_files(doc_dir: str, series_filter: list[str] | None = None) -> list[Path]:
     """收集统一文档目录下所有 DOCX 文件，按 Series 排序.
 
     目录结构: data/documents/R18/{21_series/,22_series/,...}
+              data/documents/ORAN/
     跳过封面页: _cover.docx 仅含标题/版本信息，无规范正文。
+
+    series_filter: 只包含指定 series 目录 (如 ['36','38']), None=全部.
+                   ORAN 文档不受 series_filter 影响, 始终包含。
     """
     root = Path(doc_dir)
     if not root.exists():
         logger.error("目录不存在: %s", root)
         return []
-    files = sorted(root.rglob("*.docx"), key=lambda p: (p.parent.name, p.name))
+    # 3GPP docs: data/documents/R18/...
+    files_3gpp = sorted(root.rglob("*.docx"), key=lambda p: (p.parent.name, p.name))
+    if series_filter:
+        valid_dirs = {f"{s}_series" for s in series_filter}
+        files_3gpp = [
+            f for f in files_3gpp
+            if any(d.name in valid_dirs for d in f.parents)
+        ]
+        logger.info(
+            "Series 过滤: %s → 匹配 %d 个 3GPP 文件",
+            series_filter, len(files_3gpp),
+        )
+    # ORAN docs: 同时扫描 ORAN 子目录 (优先 data/documents/ORAN, 其次 DOCUMENTS_DIR/ORAN)
+    files_oran: list[Path] = []
+    oran_dirs = [root.parent / "ORAN", root / "ORAN"]
+    for oran_dir in oran_dirs:
+        if oran_dir.exists():
+            found = sorted(oran_dir.rglob("*.docx"), key=lambda p: p.name)
+            files_oran.extend(found)
+            logger.info("发现 ORAN 文档目录: %s (%d 文件)", oran_dir, len(found))
+            break  # 只取第一个存在的目录
+    all_files = files_3gpp + files_oran
     # 跳过仅封面页（无正文内容）
-    files = [f for f in files if "_cover" not in f.stem.lower() and "cover" != f.stem.lower()]
-    return files
+    all_files = [f for f in all_files if "_cover" not in f.stem.lower() and "cover" != f.stem.lower()]
+    return all_files
 
 
 # ── 单篇处理 ──
@@ -145,6 +177,7 @@ def _normalize_chunk_sizes(all_chunks: list, splitter: HeaderAwareSplitter) -> l
                 c.text, c.doc_id, c.series,
                 c.spec_number, c.release,
                 c.parent_section_id, c.parent_title,
+                c.section_number, c.section_title, c.section_path,
                 c.chunk_index,
             )
             safe.extend(sub)
@@ -189,6 +222,11 @@ def process_single_docx(
     """
     sha = compute_sha256(docx)
     spec_number, version = parse_spec_from_stem(docx.stem)
+
+    # 判断文档类型
+    is_oran = docx.stem.upper().startswith("O-RAN") or "ORAN" in str(docx.parent).upper()
+    doc_type = "oran" if is_oran else "3gpp"
+
     result = extractor.extract_file(docx)
     # 优先用 DOCX 内容头检测的 release，其次从目录名推断
     release = result.release
@@ -200,17 +238,22 @@ def process_single_docx(
                 release = pn.upper()
                 break
     if not release:
-        logger.warning("无法检测 Release, 默认 R18: %s", docx.name)
-        release = "R18"
+        if is_oran:
+            # ORAN: 从文件名解析的 version 作为 release (如 v11.00)
+            release = version if version else "ORAN"
+        else:
+            logger.warning("无法检测 Release, 默认 R18: %s", docx.name)
+            release = "R18"
 
     if not result.markdown:
         return [], spec_number, release, version, sha
 
     doc_meta = {
         "doc_id": docx.stem,
-        "series": int(spec_number.split(".")[0]) if spec_number else 0,
+        "series": int(spec_number.split(".")[0]) if spec_number and not is_oran else 0,
         "spec_number": spec_number,
         "release": release,
+        "doc_type": doc_type,
     }
     chunks = splitter.split_document(result.markdown, doc_meta)
     return chunks, spec_number, release, version, sha
@@ -522,7 +565,10 @@ def embed_and_insert(
     for seg_idx in range(skip_segments, num_segments):
         start = seg_idx * segment_size
         end = min(start + segment_size, total)
-        seg_texts = [c.text for c in all_chunks[start:end]]
+        seg_texts = [
+            f"{c.section_title} {c.section_path} {c.text[:500]}" if c.section_path else c.text
+            for c in all_chunks[start:end]
+        ]
         seg_count = len(seg_texts)
         seg_id = seg_idx + 1
 
@@ -581,6 +627,12 @@ def main():
         help="文档根目录 (默认: 来自 DOCUMENTS_DIR 配置)",
     )
     parser.add_argument(
+        "--series",
+        nargs="*",
+        default=None,
+        help="只摄入指定 series 的文档 (如 --series 36 38), 默认全部; ORAN 始终包含",
+    )
+    parser.add_argument(
         "--resume-from-checkpoint",
         action="store_true",
         help="从 checkpoint 恢复 (跳过提取, 直接嵌入+入库; 自动检测 Milvus 断点续传)",
@@ -592,7 +644,8 @@ def main():
     full_rebuild = args.full_rebuild
     checkpoint_path = settings.checkpoint_path
 
-    docx_files = find_docx_files(doc_dir)
+    series_filter = args.series if args.series is not None and len(args.series) > 0 else None
+    docx_files = find_docx_files(doc_dir, series_filter=series_filter)
     logger.info("找到 %d 个 DOCX 文件", len(docx_files))
 
     if not docx_files:
@@ -675,6 +728,21 @@ def main():
     logger.info("  Chunks: %d", stats["chunks"])
     logger.info("  总耗时: %.1fs (%.2f min)", total_elapsed, total_elapsed / 60)
     logger.info("=" * 60)
+
+    # ── 构建离线 Cross-Reference Graph ──
+    if full_rebuild or stats.get("new", 0) > 0 or stats.get("replaced", 0) > 0:
+        logger.info("构建离线交叉引用图...")
+        try:
+            from src.ingestion.xref_graph_builder import XrefGraphBuilder
+
+            store.connect()
+            store.create_collection(drop_existing=False)
+            builder = XrefGraphBuilder(store, target_series={38})
+            xref_path = settings.data_abs_dir / "processed" / "xref_graph.json"
+            builder.build(xref_path)
+            logger.info("Xref Graph 已保存: %s", xref_path)
+        except Exception as e:
+            logger.warning("Xref Graph 构建失败 (不影响摄入主流程): %s", e)
 
     store.disconnect()
 

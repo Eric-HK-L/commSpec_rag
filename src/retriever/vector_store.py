@@ -29,10 +29,16 @@ class SearchResult:
     parent_section_id: str = ""
     parent_title: str = ""
     chunk_index: int = 0
+    section_number: str = ""    # chunk 自身的章节编号，如 "7.1.1"
+    section_title: str = ""     # 章节标题，如 "UE behaviour"
+    section_path: str = ""      # 层级路径，如 "7 Uplink Power control > 7.1 PUSCH > 7.1.1 UE behaviour"
+    doc_type: str = "3gpp"      # 文档类型: "3gpp" | "oran"
 
     def to_context_str(self, index: int = 0) -> str:
         """将检索结果格式化为注入 LLM 上下文的字符串."""
-        header = f"[来源: 3GPP TS {self.spec_number} (Series {self.series}), §{self.parent_section_id}]"
+        section_ref = self.section_number or self.parent_section_id
+        prefix = "3GPP" if self.doc_type != "oran" else "O-RAN"
+        header = f"[来源: {prefix} TS {self.spec_number} (Series {self.series}), §{section_ref}]"
         return f"{header}\n{self.text}"
 
 
@@ -49,6 +55,10 @@ class Chunk:
     parent_section_id: str = ""
     parent_title: str = ""
     chunk_index: int = 0
+    section_number: str = ""    # chunk 自身的章节编号，如 "7.1.1"
+    section_title: str = ""     # 章节标题，如 "UE behaviour"
+    section_path: str = ""      # 层级路径，如 "7 Uplink Power control > 7.1 PUSCH > 7.1.1 UE behaviour"
+    doc_type: str = "3gpp"      # 文档类型: "3gpp" | "oran"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -76,7 +86,8 @@ class VectorStore(ABC):
 
     @abstractmethod
     def search_dense(
-        self, query_embedding: np.ndarray, top_k: int = 100
+        self, query_embedding: np.ndarray, top_k: int = 100,
+        filter_expr: str | None = None,
     ) -> list[SearchResult]:
         """Dense 向量检索."""
 

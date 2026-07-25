@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { search, askStream, submitFeedback, getStats, type SearchResult, type SourceItem } from "@/lib/api";
 import { useConversationHistory } from "@/lib/useConversationHistory";
 
@@ -48,6 +49,7 @@ function parseSSELine(line: string): Partial<StreamState> | null {
 function Markdown({ content }: { content: string }) {
   return (
     <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
       components={{
         h1: ({ children }) => <h1 className="text-xl font-bold mt-6 mb-3 text-gray-900 dark:text-gray-100">{children}</h1>,
         h2: ({ children }) => <h2 className="text-lg font-semibold mt-5 mb-2 text-gray-900 dark:text-gray-100">{children}</h2>,
@@ -108,12 +110,21 @@ export default function HomePage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [feedbackRating, setFeedbackRating] = useState<"up" | "down" | null>(null);
   const [availableReleases, setAvailableReleases] = useState<string[]>([]);
+  const [availableSeries, setAvailableSeries] = useState<string[]>([]);
+  const [availableDocTypes, setAvailableDocTypes] = useState<string[]>([]);
+  const [selectedRelease, setSelectedRelease] = useState<string>("");
+  const [selectedSeries, setSelectedSeries] = useState<string>("");
+  const [selectedDocType, setSelectedDocType] = useState<string>("");
   const [rerankerEnabled, setRerankerEnabled] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    getStats().then(s => setAvailableReleases(Object.keys(s.releases))).catch(() => {});
+    getStats().then(s => {
+      setAvailableReleases(Object.keys(s.releases));
+      setAvailableSeries(s.available_series || Object.keys(s.series_distribution));
+      setAvailableDocTypes(Object.keys(s.doc_types || {}));
+    }).catch(() => {});
   }, []);
 
   const { history, addEntry, removeEntry, clearHistory } = useConversationHistory();
@@ -171,7 +182,17 @@ export default function HomePage() {
       const controller = new AbortController();
       abortRef.current = controller;
 
-      const res = await askStream(q, 10, undefined, rerankerEnabled);
+      // 构建多轮对话历史 (最近 8 轮，去重 user+assistant 配对)
+      const history = messages.map(m => ({ role: m.role, content: m.content }));
+      const res = await askStream(
+        q, 10,
+        selectedRelease || undefined,
+        selectedSeries || undefined,
+        selectedDocType || undefined,
+        rerankerEnabled,
+        history,
+        controller.signal,
+      );
       if (!res.ok) throw new Error(`SSE ${res.status}`);
       if (!res.body) throw new Error("无响应流");
 
@@ -226,8 +247,11 @@ export default function HomePage() {
         setCurrentWarnings([]);
         setCurrentVerified(false);
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "请求失败");
+    } catch (err: any) {
+      // 用户主动停止 (AbortError) 不显示错误
+      if (err?.name !== "AbortError") {
+        setError(err instanceof Error ? err.message : "请求失败");
+      }
       setLoading(false);
       setStreaming(false);
     }
@@ -248,6 +272,8 @@ export default function HomePage() {
     setCurrentAnswer("");
     setLoading(false);
     setStreaming(false);
+    // 停止后自动聚焦输入框，避免用户误以为界面卡死
+    setTimeout(() => inputRef.current?.focus(), 0);
   };
 
   const handleFeedback = async (rating: "up" | "down") => {
@@ -563,69 +589,122 @@ export default function HomePage() {
 
       {/* ── 底部输入栏 ── */}
       <div className="shrink-0 bg-white/80 dark:bg-gray-950/80 backdrop-blur border-t border-gray-200 dark:border-gray-800 px-4 py-3">
-        <form
-          onSubmit={(e) => handleSubmit(e)}
-          className="max-w-3xl mx-auto flex items-end gap-2"
-        >
-          <div className="flex-1 relative">
-            <textarea
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  handleSubmit(e);
-                }
-              }}
-              placeholder={hasConversation ? "继续提问..." : "输入问题，如：NR PUSCH 的 DMRS 配置方式有哪些？"}
-              rows={1}
-              className={`w-full px-4 py-3 rounded-2xl border border-gray-300 dark:border-gray-600
-                bg-white dark:bg-gray-900 shadow-sm
-                focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500
-                resize-none transition-shadow`}
-              disabled={loading}
-              ref={inputRef}
-            />
-          </div>
+        <div className="max-w-3xl mx-auto">
 
-          {/* 精排开关 */}
-          <button
-            type="button"
-            onClick={() => setRerankerEnabled(!rerankerEnabled)}
-            disabled={loading}
-            className={`shrink-0 px-3 py-3 rounded-2xl text-xs font-medium transition-all border
-              ${rerankerEnabled
-                ? "bg-purple-50 dark:bg-purple-950/40 border-purple-200 dark:border-purple-700 text-purple-600 dark:text-purple-300"
-                : "bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500"
-              }
-              ${loading ? "opacity-50 cursor-not-allowed" : "hover:bg-purple-100 dark:hover:bg-purple-900/30"}
-            `}
-            title={rerankerEnabled ? "精排已启用：结果更准但稍慢" : "精排已关闭：速度优先"}
-          >
-            {rerankerEnabled ? "🎯" : "⚡"}
-          </button>
+          {/* ── Row 1: 过滤选择器 (左) + 精排开关 (右, 与输入框右对齐) ── */}
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            {/* 文档类型 */}
+            {availableDocTypes.length > 0 && (
+              <select
+                value={selectedDocType}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setSelectedDocType(v);
+                  if (v === "oran") { setSelectedRelease(""); setSelectedSeries(""); }
+                }}
+                className="px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent cursor-pointer"
+              >
+                <option value="">📂 全部类型</option>
+                {availableDocTypes.map(dt => (
+                  <option key={dt} value={dt}>{dt === "3gpp" ? "📘 3GPP" : dt === "oran" ? "📙 ORAN" : dt}</option>
+                ))}
+              </select>
+            )}
 
-          {/* 发送/停止按钮 */}
-          {loading ? (
+            {/* Release — ORAN 选中时隐藏 */}
+            {selectedDocType !== "oran" && availableReleases.length > 0 && (
+              <select
+                value={selectedRelease}
+                onChange={(e) => setSelectedRelease(e.target.value)}
+                className="px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent cursor-pointer"
+              >
+                <option value="">📋 全部 Release</option>
+                {availableReleases.sort().map(r => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+            )}
+
+            {/* Series — ORAN 选中时隐藏 */}
+            {selectedDocType !== "oran" && availableSeries.length > 0 && (
+              <select
+                value={selectedSeries}
+                onChange={(e) => setSelectedSeries(e.target.value)}
+                className="px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent cursor-pointer"
+              >
+                <option value="">📁 全部 Series</option>
+                {availableSeries.sort((a, b) => parseInt(a) - parseInt(b)).map(s => (
+                  <option key={s} value={s}>Series {s}</option>
+                ))}
+              </select>
+            )}
+
+            {/* 清除过滤 */}
+            {(selectedDocType || selectedRelease || selectedSeries) && (
+              <button
+                onClick={() => { setSelectedDocType(""); setSelectedRelease(""); setSelectedSeries(""); }}
+                className="px-2 py-1.5 rounded-lg text-xs text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                title="清除全部过滤"
+              >
+                ✕ 清除
+              </button>
+            )}
+
+            {/* 精排开关 — ml-auto 推到右侧，与输入框右对齐 */}
             <button
               type="button"
-              onClick={handleStop}
-              className="shrink-0 px-4 py-3 rounded-2xl bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors"
+              onClick={() => setRerankerEnabled(!rerankerEnabled)}
+              disabled={loading}
+              className={`ml-auto shrink-0 w-20 h-[31.5px] px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors border ${rerankerEnabled ? "bg-purple-50 dark:bg-purple-950/40 border-purple-200 dark:border-purple-700 text-purple-600 dark:text-purple-300" : "bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500"} ${loading ? "opacity-50 cursor-not-allowed" : "hover:bg-purple-100 dark:hover:bg-purple-900/30"}`}
+              title={rerankerEnabled ? "精排已启用：结果更准但稍慢" : "精排已关闭：速度优先"}
             >
-              停止
+              {rerankerEnabled ? "精排" : "快速"}
             </button>
-          ) : (
-            <button
-              type="submit"
-              disabled={!query.trim()}
-              className={`shrink-0 px-5 py-3 rounded-2xl bg-blue-600 dark:bg-blue-500 text-white text-sm font-medium
-                hover:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors`}
-            >
-              发送
-            </button>
-          )}
-        </form>
+          </div>
+
+          {/* ── Row 2: 输入框 + 发送 ── */}
+          <form
+            onSubmit={(e) => handleSubmit(e)}
+            className="flex items-center gap-2"
+          >
+            <div className="flex-1 relative flex">
+              <textarea
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    handleSubmit(e);
+                  }
+                }}
+                placeholder={hasConversation ? "继续提问..." : "输入问题，如：NR PUSCH 的 DMRS 配置方式有哪些？"}
+                rows={1}
+                className="w-full h-12 px-4 py-3 rounded-2xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 resize-none transition-shadow"
+                disabled={loading}
+                ref={inputRef}
+              />
+            </div>
+
+            {/* 发送/停止按钮 */}
+            {loading ? (
+              <button
+                type="button"
+                onClick={handleStop}
+                className="shrink-0 h-12 px-5 py-3 rounded-2xl border border-transparent bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors"
+              >
+                停止
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!query.trim()}
+                className="shrink-0 w-20 h-12 px-6 py-3 rounded-2xl border border-transparent bg-blue-600 dark:bg-blue-500 text-white text-sm font-medium hover:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                发送
+              </button>
+            )}
+          </form>
+        </div>
       </div>
 
       {/* ── 动画 keyframes ── */}

@@ -45,11 +45,19 @@ def get_pipeline() -> RAGPipeline:
 
 # ── 请求/响应模型 ──
 
+class ChatMessage(BaseModel):
+    role: str = Field(..., pattern=r"^(user|assistant)$")
+    content: str = Field(..., min_length=1, max_length=4000)
+
+
 class AskRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000)
     top_k: int = Field(default=10, ge=1, le=50)
     release: str | None = Field(default=None, description="Release 过滤, 如 'R18'")
+    series: str | None = Field(default=None, description="Series 过滤, 如 '38'")
+    doc_type: str | None = Field(default=None, description="文档类型过滤, '3gpp' 或 'oran'")
     reranker_enabled: bool = Field(default=True, description="是否启用 Cross-Encoder 精排 (质量优先, 关闭可提速)")
+    history: list[ChatMessage] = Field(default_factory=list, description="多轮对话历史 (用于上下文理解)")
 
 
 class SearchRequest(BaseModel):
@@ -111,12 +119,17 @@ async def search_endpoint(req: SearchRequest) -> APIResponse[SearchResponse]:
     pipeline = get_pipeline()
     try:
         # 多取 2x 结果以补偿低质量过滤
-        results = pipeline.search(req.query, top_k=req.top_k * 2)
+        results = pipeline.search(
+            req.query, top_k=req.top_k * 2,
+            release=req.filters.release if req.filters else None,
+            series=req.filters.series if req.filters else None,
+            doc_type=req.filters.doc_type if req.filters else None,
+        )
         # 过滤低信息密度章节 (缩写表等)
         results = _filter_low_quality(results, req.top_k)
-        # 客户端过滤 (release/series/spec_number)
-        if req.filters:
-            results = _apply_filters(results, req.filters)
+        # 客户端 spec_number 精细过滤
+        if req.filters and req.filters.spec_number:
+            results = [r for r in results if r.spec_number == req.filters.spec_number]
             results = results[:req.top_k]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"检索失败: {e}")
@@ -131,7 +144,14 @@ async def search_endpoint(req: SearchRequest) -> APIResponse[SearchResponse]:
 async def ask_endpoint(req: AskRequest) -> AskResponse:
     pipeline = get_pipeline()
     try:
-        response = pipeline.ask(req.query, reranker_enabled=req.reranker_enabled)
+        response = pipeline.ask(
+            req.query,
+            reranker_enabled=req.reranker_enabled,
+            history=[h.model_dump() for h in req.history] if req.history else None,
+            release=req.release,
+            series=req.series,
+            doc_type=req.doc_type,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"生成失败: {e}")
     return AskResponse(
@@ -178,18 +198,6 @@ def _filter_low_quality(results: list[RetrievalResult], target_k: int) -> list[R
     return quality
 
 
-def _apply_filters(results: list[RetrievalResult], filters: SearchFilters) -> list[RetrievalResult]:
-    """客户端过滤检索结果."""
-    filtered = results
-    if filters.release:
-        filtered = [r for r in filtered if r.release.upper() == filters.release.upper()]
-    if filters.series:
-        filtered = [r for r in filtered if str(r.series) == filters.series]
-    if filters.spec_number:
-        filtered = [r for r in filtered if r.spec_number == filters.spec_number]
-    return filtered
-
-
 # ── 搜索增强 ──
 
 @router.post("/search/count", response_model=APIResponse[int])
@@ -197,9 +205,14 @@ async def search_count_endpoint(req: SearchRequest) -> APIResponse[int]:
     """返回检索结果总数 (不含具体内容)."""
     pipeline = get_pipeline()
     try:
-        results = pipeline.search(req.query, top_k=req.top_k)
-        if req.filters:
-            results = _apply_filters(results, req.filters)
+        results = pipeline.search(
+            req.query, top_k=req.top_k,
+            release=req.filters.release if req.filters else None,
+            series=req.filters.series if req.filters else None,
+            doc_type=req.filters.doc_type if req.filters else None,
+        )
+        if req.filters and req.filters.spec_number:
+            results = [r for r in results if r.spec_number == req.filters.spec_number]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"检索失败: {e}")
     return APIResponse.ok(len(results))
@@ -230,10 +243,15 @@ async def search_batch_endpoint(req: BatchSearchRequest) -> APIResponse[list[Bat
     pipeline = get_pipeline()
 
     def _search_one(q: BatchSearchQuery) -> BatchSearchItem:
-        results = pipeline.search(q.query, top_k=q.top_k * 2)
+        results = pipeline.search(
+            q.query, top_k=q.top_k * 2,
+            release=q.filters.release if q.filters else None,
+            series=q.filters.series if q.filters else None,
+            doc_type=q.filters.doc_type if q.filters else None,
+        )
         results = _filter_low_quality(results, q.top_k)
-        if q.filters:
-            results = _apply_filters(results, q.filters)
+        if q.filters and q.filters.spec_number:
+            results = [r for r in results if r.spec_number == q.filters.spec_number]
             results = results[:q.top_k]
         return BatchSearchItem(
             query=q.query,
@@ -254,7 +272,7 @@ async def search_batch_endpoint(req: BatchSearchRequest) -> APIResponse[list[Bat
 @router.get("/documents", response_model=APIResponse[list[DocumentItem]])
 async def list_documents(
     offset: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=200),
+    limit: int = Query(20, ge=1, le=1000),
     series: str | None = Query(None),
     release: str | None = Query(None),
 ) -> APIResponse[list[DocumentItem]]:
@@ -344,7 +362,14 @@ async def ask_stream_endpoint(req: AskRequest):
         t0 = time.time()
         try:
             # 走完整 Pipeline (检索+扩展+交叉引用+多跳+验证+生成)
-            response = pipeline.ask(req.query, reranker_enabled=req.reranker_enabled)
+            response = pipeline.ask(
+                req.query,
+                reranker_enabled=req.reranker_enabled,
+                history=[h.model_dump() for h in req.history] if req.history else None,
+                release=req.release,
+                series=req.series,
+                doc_type=req.doc_type,
+            )
 
             # 1. 推送 sources (来自完整 Pipeline 的检索结果)
             sources_data = [
@@ -392,10 +417,16 @@ async def system_stats() -> APIResponse[SystemStats]:
 
     releases: dict[str, int] = defaultdict(int)
     series_dist: dict[str, int] = defaultdict(int)
+    doc_types: dict[str, int] = defaultdict(int)
     for doc in doc_map.values():
-        if doc.release:
+        dt = getattr(doc, "doc_type", "3gpp") or "3gpp"
+        # release 维度仅对 3GPP 有意义，ORAN 版本号 (如 v21.00) 不应混入
+        if doc.release and dt == "3gpp":
             releases[doc.release] += 1
         series_dist[str(doc.series)] += doc.chunk_count
+        doc_types[dt] += 1
+
+    available_series = sorted(set(str(doc.series) for doc in doc_map.values() if doc.series > 0))
 
     return APIResponse.ok(SystemStats(
         total_docs=len(doc_map),
@@ -403,6 +434,8 @@ async def system_stats() -> APIResponse[SystemStats]:
         releases=dict(releases),
         series_distribution=dict(series_dist),
         vector_db=pipeline._store.__class__.__name__,
+        available_series=available_series,
+        doc_types=dict(doc_types),
     ))
 
 
@@ -421,6 +454,7 @@ def _get_document_map(pipeline: RAGPipeline) -> dict[str, DocumentItem]:
             title=info.get("title", ""),
             series=info.get("series", 0),
             chunk_count=info.get("chunk_count", 0),
+            doc_type=info.get("doc_type", "3gpp"),
         )
     return doc_map
 

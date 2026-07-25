@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { search, ask, searchBatch, type SearchResult, type AskResponse } from "@/lib/api";
 
 const PRESET_QUERIES = [
@@ -43,7 +44,7 @@ export default function SearchTestPage() {
       const tSearch1 = performance.now();
 
       const tAsk0 = performance.now();
-      const askRes = await ask(q, topK, undefined, rerankerEnabled);
+      const askRes = await ask(q, topK, undefined, undefined, undefined, rerankerEnabled);
       const tAsk1 = performance.now();
 
       setResults(searchRes.results);
@@ -192,6 +193,7 @@ export default function SearchTestPage() {
               <div className="p-5 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 shadow-sm">
                 <div className="leading-relaxed text-sm text-gray-800 dark:text-gray-200">
                   <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
                     components={{
                       h1: ({ children }) => <h1 className="text-lg font-bold mt-4 mb-2">{children}</h1>,
                       h2: ({ children }) => <h2 className="text-base font-semibold mt-3 mb-1.5">{children}</h2>,

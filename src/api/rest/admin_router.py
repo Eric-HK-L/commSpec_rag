@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -364,7 +365,7 @@ async def system_info() -> APIResponse[SystemInfo]:
 
     # 磁盘
     try:
-        usage = os.disk_usage(str(settings.project_root))
+        usage = shutil.disk_usage(str(settings.project_root))
         disk_used_gb = round(usage.used / (1024 ** 3), 1)
         disk_total_gb = round(usage.total / (1024 ** 3), 1)
         disk_percent = round((usage.used / usage.total) * 100, 1)
@@ -439,20 +440,27 @@ def _get_memory_info() -> dict[str, float]:
         if sys.platform == "darwin":
             vm = sp.check_output(["vm_stat"], text=True)
             page_size = int(sp.check_output(["sysctl", "-n", "hw.pagesize"]).strip())
-            lines = {}
+            # 用 hw.memsize 获取物理内存总量 (Apple Silicon 统一内存准确)
+            total_mb = int(sp.check_output(["sysctl", "-n", "hw.memsize"]).strip()) / (1024 ** 2)
+            lines: dict[str, int] = {}
             for line in vm.splitlines():
                 if ":" in line:
                     k, v = line.split(":", 1)
                     key = k.strip().strip('"')
                     val = v.strip().rstrip(".")
-                    lines[key] = int(val)
+                    # macOS 26: 首行含 "(page size of ...)" 无法转为 int
+                    try:
+                        lines[key] = int(val)
+                    except ValueError:
+                        continue
+            # Activity Monitor 接近公式: Anonymous + Wired + Compressed
+            # (仅用 Active+Wired+Compressed 会漏掉大量匿名非活跃页, 低估 6-7GB)
+            anon_pages = lines.get("Anonymous pages", 0)
             used_pages = (
-                lines.get("Pages active", 0) +
+                anon_pages +
                 lines.get("Pages wired down", 0) +
                 lines.get("Pages occupied by compressor", 0)
             )
-            free_pages = lines.get("Pages free", 0)
-            total_mb = ((used_pages + free_pages) * page_size) / (1024 ** 2)
             used_mb = (used_pages * page_size) / (1024 ** 2)
             return {"used_mb": used_mb, "total_mb": total_mb, "percent": round((used_mb / total_mb) * 100, 1) if total_mb > 0 else 0}
         else:

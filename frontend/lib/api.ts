@@ -1,6 +1,6 @@
 /** 3GPP RAG API 调用层 */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+const API_URL = "/api/v1"; // 请求经由 Next.js rewrites 反向代理转发至后端，规避跨域与硬编码IP问题
 
 // ── 类型定义 ──
 
@@ -68,6 +68,8 @@ export interface SystemStats {
   series_distribution: Record<string, number>;
   vector_db: string;
   embedding_dim: number;
+  available_series?: string[];
+  doc_types?: Record<string, number>;
 }
 
 export interface AdminStats {
@@ -155,15 +157,19 @@ export interface FeedbackStats {
 // ── API 调用 ──
 
 async function apiGet<T>(path: string, params?: Record<string, string>): Promise<T> {
-  const url = new URL(`${API_URL}${path}`);
+  const url = new URL(`${API_URL}${path}`, window.location.origin);
   if (params) {
     Object.entries(params).forEach(([k, v]) => { if (v) url.searchParams.set(k, v); });
   }
   const res = await fetch(url.toString());
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
   const json = await res.json();
-  if (!json.success && json.error) throw new Error(json.error);
-  return json.data as T;
+  // 兼容两种响应格式: 带 APIResponse 包装 (有 success 字段) vs 直接返回数据
+  if ("success" in json) {
+    if (!json.success && json.error) throw new Error(json.error);
+    return json.data as T;
+  }
+  return json as T;
 }
 
 async function apiPost<T>(path: string, body: unknown): Promise<T> {
@@ -190,16 +196,34 @@ export async function search(query: string, topK = 10) {
 }
 
 /** RAG 问答 */
-export async function ask(query: string, topK = 10, release?: string, rerankerEnabled = true) {
-  return apiPost<AskResponse>("/ask", { query, top_k: topK, release, reranker_enabled: rerankerEnabled });
+export async function ask(query: string, topK = 10, release?: string, series?: string, docType?: string, rerankerEnabled = true) {
+  return apiPost<AskResponse>("/ask", { query, top_k: topK, release, series, doc_type: docType, reranker_enabled: rerankerEnabled });
 }
 
 /** SSE 流式问答 — 返回 fetch Response 供 ReadableStream 消费 */
-export function askStream(query: string, topK = 10, release?: string, rerankerEnabled = true) {
+export function askStream(
+  query: string,
+  topK = 10,
+  release?: string,
+  series?: string,
+  docType?: string,
+  rerankerEnabled = true,
+  history?: { role: string; content: string }[],
+  signal?: AbortSignal,
+) {
   return fetch(`${API_URL}/ask/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, top_k: topK, release, reranker_enabled: rerankerEnabled }),
+    body: JSON.stringify({
+      query,
+      top_k: topK,
+      release,
+      series,
+      doc_type: docType,
+      reranker_enabled: rerankerEnabled,
+      history: history || [],
+    }),
+    signal,
   });
 }
 
@@ -271,9 +295,13 @@ export async function getManifest() {
 
 /** 删除 manifest 记录 */
 export async function deleteManifestRecord(key: string) {
-  return apiGet<{ deleted_key: string; spec_number: string; release: string }>(
-    `/admin/manifest/${encodeURIComponent(key)}`
-  );
+  const res = await fetch(`${API_URL}/admin/manifest/${encodeURIComponent(key)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
+  const json = await res.json();
+  if (!json.success && json.error) throw new Error(json.error);
+  return json.data as { deleted_key: string; spec_number: string; release: string };
 }
 
 /** 系统日志 */

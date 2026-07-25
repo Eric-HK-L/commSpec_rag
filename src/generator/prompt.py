@@ -2,7 +2,164 @@
 
 from __future__ import annotations
 
+import re
+
 from src.retriever.search import RetrievalResult
+
+# ── Grid Table → Pipe Table 转换 ──
+
+# 匹配 Grid Table 边框行: +---+ 或 +===+ 或 +---+---+
+_GRID_BORDER = re.compile(r'^\+[+\-=]+\+$')
+
+
+def _grid_table_to_pipe(text: str) -> str:
+    """将 pandoc Grid Table 转换为 GFM pipe table，使前端 ReactMarkdown 可渲染.
+
+    pandoc 默认输出 Grid Table 格式:
+        +-------+-------+
+        | Col1  | Col2  |
+        +=======+=======+
+        | val1  | val2  |
+        +-------+-------+
+
+    转换为 GFM pipe table:
+        | Col1 | Col2 |
+        |------|------|
+        | val1 | val2 |
+
+    如果文本中没有 Grid Table，原样返回。
+    """
+    lines = text.split('\n')
+    result: list[str] = []
+    i = 0
+    n = len(lines)
+
+    while i < n:
+        stripped = lines[i].strip()
+
+        # 检测 Grid Table 起始边框
+        if _GRID_BORDER.match(stripped):
+            table_start = i
+            # 收集整个表格行范围
+            i += 1
+            while i < n:
+                s = lines[i].strip()
+                if _GRID_BORDER.match(s):
+                    # 判断这是结束边框还是中间边框:
+                    # 下一行如果是 |...| → 表格继续; 否则结束
+                    next_is_data = (i + 1 < n and lines[i + 1].strip().startswith('|'))
+                    if not next_is_data:
+                        i += 1
+                        break
+                i += 1
+            table_end = i
+
+            # 转换这个 Grid Table
+            pipe_table = _convert_single_grid_table(lines[table_start:table_end])
+            if pipe_table:
+                result.append(pipe_table)
+            continue
+
+        result.append(lines[i])
+        i += 1
+
+    return '\n'.join(result)
+
+
+def _convert_single_grid_table(table_lines: list[str]) -> str:
+    """转换单个 Grid Table 为 pipe table."""
+    # 提取数据行: 以 | 开头、不是 + 边框的行
+    rows: list[list[str]] = []
+    header_sep_seen = False
+    header_row_idx: int | None = None
+
+    for i, line in enumerate(table_lines):
+        stripped = line.strip()
+        if stripped.startswith('|'):
+            # 提取单元格: 去掉首尾 |，按 | 分割
+            cells = [c.strip() for c in stripped[1:-1].split('|')]
+            rows.append(cells)
+        elif '===' in stripped:
+            # +===+ 是表头分隔符，前一行是表头
+            header_sep_seen = True
+            if rows:
+                header_row_idx = len(rows) - 1
+
+    if not rows:
+        return ''
+
+    # 确定列数
+    ncols = max(len(r) for r in rows) if rows else 0
+    if ncols == 0:
+        return ''
+
+    # 构建 pipe table
+    result_lines: list[str] = []
+
+    # 确定表头行
+    if header_sep_seen and header_row_idx is not None:
+        header = rows[header_row_idx]
+        data_rows = rows[:header_row_idx] + rows[header_row_idx + 1:]
+    else:
+        # 无显式表头分隔符: 第一行作为表头
+        header = rows[0]
+        data_rows = rows[1:]
+
+    # 补齐列数
+    header = _pad_row(header, ncols)
+
+    # 表头行
+    result_lines.append('| ' + ' | '.join(header) + ' |')
+    # 分隔行
+    result_lines.append('| ' + ' | '.join(['---'] * ncols) + ' |')
+    # 数据行
+    for row in data_rows:
+        row = _pad_row(row, ncols)
+        result_lines.append('| ' + ' | '.join(row) + ' |')
+
+    return '\n'.join(result_lines)
+
+
+def _pad_row(row: list[str], ncols: int) -> list[str]:
+    """补齐行到指定列数."""
+    if len(row) < ncols:
+        return row + [''] * (ncols - len(row))
+    return row[:ncols]
+
+
+# ── 分类/列举类问题检测 ──
+
+_TAXONOMY_KEYWORDS_CN = [
+    "格式", "分类", "种类", "类型", "有哪些", "全部", "所有",
+    "列出", "列举", "汇总", "清单", "总结", "多少种",
+]
+_TAXONOMY_KEYWORDS_EN = [
+    "format", "type", "category", "classification", "list all",
+    "enumerate", "what are", "kinds of", "summarize", "how many",
+]
+
+
+def _is_taxonomy_query(query: str) -> bool:
+    """检测查询是否为分类/列举类问题."""
+    for kw in _TAXONOMY_KEYWORDS_CN:
+        if kw in query:
+            return True
+    query_lower = query.lower()
+    for kw in _TAXONOMY_KEYWORDS_EN:
+        if kw in query_lower:
+            return True
+    return False
+
+
+_TAXONOMY_EXTRA_PROMPT = """
+
+【分类列举模式】
+这是一道分类列举题，请特别注意：
+7. 穷举检索片段中涉及的所有格式/类型/分类，不要遗漏任何一个
+8. 按层级组织答案：大类→子类→具体条目，使用 Markdown 标题层级（##、###）
+9. 如检索片段包含完整表格数据，优先使用 Markdown 管道表格呈现汇总
+10. 回答末尾附"覆盖清单"：列出已覆盖的条目名称并标注来源章节号
+11. 若检索片段覆盖不全，在末尾明确指出"以下格式未在检索片段中找到"并列出缺失项"""
 
 
 def build_rag_prompt(
@@ -11,6 +168,7 @@ def build_rag_prompt(
     max_context_chunks: int = 10,
     extra_system_note: str = "",
     online_context: str = "",
+    history: list[dict[str, str]] | None = None,
 ) -> list[dict[str, str]]:
     """构建 RAG 问答提示词.
 
@@ -20,10 +178,27 @@ def build_rag_prompt(
         max_context_chunks: 最大上下文块数.
         extra_system_note: 可选的额外系统提示 (如 Release 版本说明).
         online_context: 可选的在线搜索补充上下文 (如 Google/TSpec-LLM).
+        history: 可选的多轮对话历史 [{"role": "user/assistant", "content": "..."}].
     """
+    # 分类列举问题需要更多上下文覆盖
+    _is_taxonomy = _is_taxonomy_query(query)
+    if _is_taxonomy:
+        max_context_chunks = min(max_context_chunks * 2, len(retrieved_chunks))
+
     context_parts: list[str] = []
     for i, chunk in enumerate(retrieved_chunks[:max_context_chunks]):
-        context_parts.append(chunk.to_context_str(i))
+        # 将 Grid Table 转为 pipe table，确保前端可渲染
+        converted_text = _grid_table_to_pipe(chunk.text)
+        # 临时覆盖 text 以复用 to_context_str
+        original_text = chunk.text
+        chunk.text = converted_text
+        # 构建引用标签，包含 section_number 层级路径
+        ref_label = f"[{i + 1}]"
+        section_label = chunk.section_number or chunk.parent_section_id
+        section_path = chunk.section_path or chunk.parent_title
+        header = f"{ref_label} TS {chunk.spec_number} §{section_label} | {section_path}"
+        context_parts.append(f"{header}\n{chunk.text}")
+        chunk.text = original_text
     context_text = "\n\n---\n\n".join(context_parts)
 
     # 合并在线补充
@@ -35,10 +210,17 @@ def build_rag_prompt(
 
 回答规则：
 1. 严格基于提供的文档片段，不要编造规范内容
-2. 每个关键论断必须注明来源（引用的 TS 编号和章节号）
-3. 如果文档片段不足以回答，明确说明"根据提供的规范片段无法确定"
-4. 使用中文回答，但保留规范术语的英文原文（如 PDU Session, N2 Interface）
-5. 回答结构清晰：先给出直接答案，再列出规范依据"""
+2. 每个关键论断必须注明来源 —— 使用内联引用编号 [1][2][3]，对应到最后的 References 表
+3. 文档可信度优先级：Physical layer spec 优先（38.211 > 38.212 > 38.213 > 38.214）
+   详细说明 > 概述；官方定义 > 一般描述；指定 release 的规范 > 泛用版本
+4. 如果文档片段不足以回答，明确说明"根据提供的规范片段无法确定"，并指出缺少哪些信息
+5. 使用中文回答，但保留规范术语的英文原文（如 PDU Session, N2 Interface）
+6. 回答结构清晰：先给直接答案，再列规范依据
+7. 当回答中包含表格时，必须使用 Markdown 管道表格格式（|列1|列2|），禁止使用 Grid Table（+---+）格式
+8. 回答末尾附 References 表：每行包含 [编号] Section / Section Hierarchy / Cited Content（原文摘录）/ Relevance"""
+
+    if _is_taxonomy:
+        system_prompt += _TAXONOMY_EXTRA_PROMPT
 
     if extra_system_note:
         system_prompt += "\n\n" + extra_system_note
@@ -53,14 +235,22 @@ def build_rag_prompt(
 
 请基于以上规范片段回答问题。"""
 
+    # 多轮对话：将历史插入最终消息，帮助 LLM 理解追问意图
+    if history and len(history) >= 2:
+        history_text = "## 对话历史\n\n" + "\n".join(
+            f"{'👤 用户' if h['role'] == 'user' else '🤖 助手'}: {h['content'][:300]}"
+            for h in history[-8:]
+        )
+        user_prompt = history_text + "\n\n" + user_prompt
+
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
 
 
-def build_query_expansion_prompt(query: str) -> list[dict[str, str]]:
-    """构建查询扩展提示词."""
+def build_query_expansion_prompt(query: str, history: list[dict[str, str]] | None = None) -> list[dict[str, str]]:
+    """构建查询扩展提示词 — 支持多轮对话上下文."""
     system_prompt = """你是一个 3GPP 规范查询优化器。将用户的自然语言问题转化为更适合检索的关键词组合。
 
 规则：
@@ -69,7 +259,17 @@ def build_query_expansion_prompt(query: str) -> list[dict[str, str]]:
 3. 保留关键技术缩写（如 AMF, SMF, gNB, NG-RAN）
 4. 输出格式：只输出优化后的查询文本，不要解释"""
 
+    user_content = query
+    if history and len(history) >= 2:
+        # 将最近几轮对话作为上下文，帮助理解指代消解
+        history_lines = ["## 对话历史 (用于理解当前问题的上下文)"]
+        for msg in history[-6:]:  # 最近 3 轮 (6 条消息)
+            role = "用户" if msg["role"] == "user" else "助手"
+            history_lines.append(f"{role}: {msg['content'][:200]}")
+        history_lines.append(f"\n## 当前问题 (需要优化为检索关键词)\n{query}")
+        user_content = "\n".join(history_lines)
+
     return [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": query},
+        {"role": "user", "content": user_content},
     ]

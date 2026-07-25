@@ -54,6 +54,7 @@ class SearchFilters(BaseModel):
     series: str | None = Field(default=None, description="规范系列号, 如 '38'")
     release: str | None = Field(default=None, description="Release, 如 'R18'")
     spec_number: str | None = Field(default=None, description="规范编号, 如 '38.300'")
+    doc_type: str | None = Field(default=None, description="文档类型, '3gpp' 或 'oran'")
 
 
 # ── 排序 ──
@@ -73,6 +74,7 @@ class DocumentItem(BaseModel):
     title: str = ""
     series: int = 0
     chunk_count: int = 0
+    doc_type: str = "3gpp"  # "3gpp" | "oran"
 
 
 class DocumentDetail(BaseModel):
@@ -108,3 +110,5 @@ class SystemStats(BaseModel):
     series_distribution: dict[str, int]  # series → chunk count
     vector_db: str
     embedding_dim: int = 1024
+    available_series: list[str] = []  # 可用的 Series 列表
+    doc_types: dict[str, int] = {}  # doc_type → chunk count

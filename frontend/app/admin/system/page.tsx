@@ -56,13 +56,13 @@ export default function SystemPage() {
           <Section title="内存">
             <ProgressBar
               label="已用"
-              used={info.memory_used_mb}
-              total={info.memory_total_mb}
-              unit="MB"
+              used={info.memory_used_mb / 1024}
+              total={info.memory_total_mb / 1024}
+              unit="GB"
               color={info.memory_percent > 80 ? "red" : info.memory_percent > 60 ? "yellow" : "blue"}
             />
             <div className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-              {info.memory_used_mb.toFixed(0)} / {info.memory_total_mb.toFixed(0)} MB ({info.memory_percent}%)
+              {(info.memory_used_mb / 1024).toFixed(2)} / {(info.memory_total_mb / 1024).toFixed(2)} GB ({info.memory_percent}%)
             </div>
           </Section>
 
@@ -76,7 +76,7 @@ export default function SystemPage() {
               color={info.disk_percent > 80 ? "red" : info.disk_percent > 60 ? "yellow" : "blue"}
             />
             <div className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-              {info.disk_used_gb} / {info.disk_total_gb} GB ({info.disk_percent}%)
+              {info.disk_used_gb.toFixed(2)} / {info.disk_total_gb.toFixed(2)} GB ({info.disk_percent}%)
             </div>
           </Section>
         </>

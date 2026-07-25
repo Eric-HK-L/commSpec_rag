@@ -48,6 +48,10 @@ export default function IngestionPage() {
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
       <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">⚙️ 摄入管理</h1>
 
+      {loading && !status && (
+        <div className="p-8 text-gray-500 dark:text-gray-400">加载中...</div>
+      )}
+
       {/* 触发按钮 */}
       <div className="flex gap-3 items-center">
         <button
@@ -92,7 +96,7 @@ export default function IngestionPage() {
       {/* 日志 */}
       {status && (
         <div className="rounded-xl border border-gray-700 dark:border-gray-600 bg-gray-900 dark:bg-black overflow-hidden shadow-sm">
-          <div className="px-4 py-2 bg-gray-800 dark:bg-gray-850 text-xs text-gray-400 font-mono flex justify-between">
+          <div className="px-4 py-2 bg-gray-800 dark:bg-gray-800 text-xs text-gray-400 font-mono flex justify-between">
             <span>摄入日志</span>
             <span>{status.log_tail.length} 行</span>
           </div>
@@ -106,11 +110,16 @@ export default function IngestionPage() {
 }
 
 function Badge({ label, value, color }: { label: string; value: string; color: string }) {
-  const c = { gray: "bg-gray-50 border-gray-200", green: "bg-green-50 border-green-100", red: "bg-red-50 border-red-100" }[color] || "bg-gray-50 border-gray-200";
+  const c: Record<string, string> = {
+    gray: "bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700",
+    green: "bg-green-50 dark:bg-green-900/20 border-green-100 dark:border-green-800",
+    red: "bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-800",
+  };
+  const cls = c[color] || c.gray;
   return (
-    <div className={`p-3 rounded-lg border ${c}`}>
-      <div className="text-xs text-gray-400">{label}</div>
-      <div className="font-medium text-gray-700 text-sm mt-0.5">{value}</div>
+    <div className={`p-3 rounded-lg border ${cls}`}>
+      <div className="text-xs text-gray-400 dark:text-gray-500">{label}</div>
+      <div className="font-medium text-gray-700 dark:text-gray-300 text-sm mt-0.5">{value}</div>
     </div>
   );
 }

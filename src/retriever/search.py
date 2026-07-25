@@ -26,6 +26,10 @@ class RetrievalResult:
     parent_section_id: str = ""
     parent_title: str = ""
     chunk_index: int = 0
+    section_number: str = ""    # chunk 自身的章节编号，如 "7.1.1"
+    section_title: str = ""     # 章节标题，如 "UE behaviour"
+    section_path: str = ""      # 层级路径
+    doc_type: str = "3gpp"      # 文档类型: "3gpp" | "oran"
     # 扩展上下文：同文档相邻 chunk
     adjacent_chunks: list[str] = field(default_factory=list)
 
@@ -42,6 +46,10 @@ class RetrievalResult:
             parent_section_id=sr.parent_section_id,
             parent_title=sr.parent_title,
             chunk_index=sr.chunk_index,
+            section_number=sr.section_number,
+            section_title=sr.section_title,
+            section_path=sr.section_path,
+            doc_type=sr.doc_type,
         )
 
     def to_context_str(self, index: int = 0) -> str:
@@ -49,15 +57,26 @@ class RetrievalResult:
         parts = []
         if self.spec_number:
             parts.append(f"TS {self.spec_number}")
-        if self.parent_section_id:
-            parts.append(f"§{self.parent_section_id}")
+        section_ref = self.section_number or self.parent_section_id
+        if section_ref:
+            parts.append(f"§{section_ref}")
         if self.parent_title:
             parts.append(self.parent_title)
         if self.release:
             parts.append(f"({self.release})")
 
         header = " | ".join(parts) if parts else f"Doc: {self.doc_id}"
-        return f"[{header}]\n{self.text}"
+        body = f"[{header}]\n{self.text}"
+
+        # 附加相邻 chunk 上下文 (最多 4 条)
+        if self.adjacent_chunks:
+            adj_text = "\n".join(
+                f"  [{i}] {t[:500]}"
+                for i, t in enumerate(self.adjacent_chunks[:4])
+            )
+            body += f"\n\n[相邻上下文]\n{adj_text}"
+
+        return body
 
 
 class HybridRetriever:
@@ -82,12 +101,14 @@ class HybridRetriever:
         self,
         query: str,
         query_embedding: np.ndarray,
+        filter_expr: str | None = None,
     ) -> list[RetrievalResult]:
         """执行混合检索.
 
         Args:
             query: 原始查询文本.
             query_embedding: 查询的向量嵌入 (1024-dim float32).
+            filter_expr: Milvus 标量过滤表达式, 如 'release == "R18" && doc_type == "3gpp"'.
 
         Returns:
             按 RRF 融合排序的检索结果.
@@ -100,6 +121,7 @@ class HybridRetriever:
                 dense_top_k=self._dense_top_k,
                 sparse_top_k=self._sparse_top_k,
                 final_top_k=self._final_top_k,
+                filter_expr=filter_expr,
             )
         else:
             # 降级：仅 Dense 检索
@@ -107,6 +129,7 @@ class HybridRetriever:
             results = self._store.search_dense(
                 query_embedding=query_embedding,
                 top_k=self._final_top_k,
+                filter_expr=filter_expr,
             )
 
         return [RetrievalResult.from_search_result(r) for r in results]

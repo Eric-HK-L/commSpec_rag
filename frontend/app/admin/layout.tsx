@@ -28,7 +28,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   };
 
   return (
-    <div className="flex min-h-[calc(100vh-57px)]">
+    <div className="flex h-full">
       {/* 侧边栏 */}
       <aside className="w-52 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700 flex-shrink-0 flex flex-col transition-colors">
         <div className="px-4 py-4 border-b border-gray-100 dark:border-gray-800">

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { getDocumentChunks, getDocument, type ChunkItem, type DocumentDetail } from "@/lib/api";
 
 export default function DocumentDetailPage() {
@@ -27,6 +28,14 @@ export default function DocumentDetailPage() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
+      {/* 返回按钮 */}
+      <Link
+        href="/admin/documents"
+        className="inline-flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+      >
+        <span className="text-lg leading-none">←</span> 返回文档列表
+      </Link>
+
       <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">📄 文档详情</h1>
 
       {/* 元数据 */}

@@ -23,7 +23,7 @@ export default function AdminDocumentsPage() {
     setError(null);
     try {
       const [data, manifest] = await Promise.all([
-        getDocuments(0, 200, series || undefined, release || undefined),
+        getDocuments(0, 500, series || undefined, release || undefined),
         getManifest().catch(() => []),
       ]);
       // 构建 spec_number → ingested_at 映射

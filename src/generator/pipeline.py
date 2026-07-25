@@ -6,6 +6,7 @@ import hashlib
 import logging
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 from cachetools import TTLCache
@@ -13,7 +14,7 @@ from cachetools import TTLCache
 from src.config import settings
 from src.generator.i18n import detect_language, translate_from_english, translate_to_english
 from src.generator.llm_client import LLMClient
-from src.generator.prompt import build_query_expansion_prompt, build_rag_prompt
+from src.generator.prompt import _is_taxonomy_query, build_query_expansion_prompt, build_rag_prompt
 from src.generator.release_aware import (
     build_release_context,
     build_release_note_for_prompt,
@@ -21,6 +22,7 @@ from src.generator.release_aware import (
 )
 from src.generator.verifier import AnswerVerifier
 from src.retriever.cross_ref import _deduplicate_refs, extract_references
+from src.retriever.graph_expander import GraphExpander
 from src.retriever.multi_hop import MultiHopRetriever, needs_multi_hop
 from src.retriever.online_supplement import OnlineSupplement
 from src.retriever.query_quality import diagnose_quality, evaluate_quality, filter_noise
@@ -84,12 +86,33 @@ class RAGPipeline:
         # 查询级 LRU 缓存: TTL 1 小时, 最多 256 条, key=md5(query)
         self._query_cache: TTLCache = TTLCache(maxsize=256, ttl=3600)
 
-    def ask(self, query: str, reranker_enabled: bool = True) -> RAGResponse:
+        # 离线 Xref Graph 扩展器 (可选加载)
+        self._graph_expander: GraphExpander | None = None
+        xref_path = settings.data_abs_dir / "processed" / "xref_graph.json"
+        if xref_path.exists():
+            try:
+                self._graph_expander = GraphExpander(xref_path, store=vector_store)
+                if self._graph_expander.load():
+                    logger.info("Xref Graph 扩展器已就绪")
+            except Exception as e:
+                logger.warning("Xref Graph 加载失败: %s", e)
+
+    def ask(
+        self, query: str, reranker_enabled: bool = True,
+        history: list[dict[str, str]] | None = None,
+        release: str | None = None,
+        series: str | None = None,
+        doc_type: str | None = None,
+    ) -> RAGResponse:
         """执行完整 RAG 问答.
 
         Args:
             query: 用户查询
             reranker_enabled: 是否启用 Cross-Encoder 精排 (请求级覆盖全局配置)
+            history: 可选的多轮对话历史 [{"role": "user/assistant", "content": "..."}]
+            release: Release 过滤, 如 'R18' (仅检索指定 Release 的文档)
+            series: Series 过滤, 如 '38' (仅检索指定 Series 的文档)
+            doc_type: 文档类型过滤, '3gpp' 或 'oran' (仅检索指定类型的文档)
         """
         # 查询缓存: 相同查询 1 小时内直接返回缓存结果
         cache_key = hashlib.md5(query.lower().strip().encode()).hexdigest()
@@ -104,20 +127,26 @@ class RAGPipeline:
         query_lang = detect_language(query)
         search_query = translate_to_english(query, query_lang, self._llm)
 
-        # Step 1: 查询扩展
-        expanded_query = self._expand_query(search_query)
+        # Step 1: 查询扩展 (含多轮对话上下文)
+        expanded_query = self._expand_query(search_query, history)
 
         # Step 2: 生成查询嵌入
         query_embedding = self._get_query_embedding(expanded_query)
 
         # Step 3: 混合检索
         t_search = time.time()
+        # 构建 Milvus 标量过滤表达式
+        filter_expr = self._build_filter_expr(release=release, series=series, doc_type=doc_type)
         # 若启用 reranker, 先用大池子检索再精排
         search_top_k = settings.reranker_top_k if reranker_enabled else settings.max_search_results
         old_final = self._retriever._final_top_k
         self._retriever._final_top_k = search_top_k
-        results = self._retriever.search(expanded_query, query_embedding)
+        results = self._retriever.search(expanded_query, query_embedding, filter_expr=filter_expr)
         self._retriever._final_top_k = old_final
+
+        # Step 3.1: 分类列举查询 → 多角度分解检索（子查询并行搜索 + 合并去重）
+        if _is_taxonomy_query(search_query):
+            results = self._taxonomy_decompose_search(search_query, query_embedding, results, filter_expr=filter_expr)
 
         # Spec-aware + Cross-Encoder Reranker 精排
         results = self._post_process_results(
@@ -141,8 +170,18 @@ class RAGPipeline:
                 logger.warning("多跳检索失败, 使用单跳结果: %s", e)
                 record_error("multi_hop_failed")
 
-        # Step 3.5: 交叉引用解析
-        results = self._resolve_cross_refs(results, max_refs=5)
+        # Step 3.5: 交叉引用解析 — 优先用离线图扩展，降级为在线二次检索
+        if self._graph_expander and self._graph_expander.is_loaded:
+            expanded = self._graph_expander.expand(results, max_per_chunk=5, top_n=10)
+            if expanded:
+                from src.retriever.search import RetrievalResult
+                expanded_results = [
+                    RetrievalResult.from_search_result(r) for r in expanded
+                ]
+                results = results + expanded_results
+                logger.info("图增强检索: +%d 条 cross-spec chunk", len(expanded))
+        else:
+            results = self._resolve_cross_refs(results, max_refs=5)
 
         # Step 3.6: 检索质量评估
         quality = evaluate_quality(results)
@@ -190,11 +229,15 @@ class RAGPipeline:
                 warnings=[],
             )
 
+        # Step 3.9: 相邻 chunk 上下文扩展 — 为每个命中 chunk 拉取同文档前后文
+        self._expand_adjacent_chunks(results)
+
         # Step 4: 构建 RAG 提示词 (使用英文检索查询, 保证与检索上下文语言一致)
         messages = build_rag_prompt(
             search_query, results,
             extra_system_note=release_note,
             online_context=online_context,
+            history=history,
         )
 
         # Step 5: LLM 生成
@@ -232,7 +275,8 @@ class RAGPipeline:
         self._query_cache[cache_key] = response
         return response
 
-    def search(self, query: str, top_k: int | None = None, reranker_enabled: bool = True) -> list[RetrievalResult]:
+    def search(self, query: str, top_k: int | None = None, reranker_enabled: bool = True,
+               release: str | None = None, series: str | None = None, doc_type: str | None = None) -> list[RetrievalResult]:
         """仅执行检索 (不生成答案) — 含 spec-aware + Cross-Encoder 重排序.
 
         Phase 1: 常规混合检索 (Dense+BM25+RRF).
@@ -243,6 +287,9 @@ class RAGPipeline:
             query: 用户查询
             top_k: 返回条数
             reranker_enabled: 是否启用 Cross-Encoder 精排 (请求级覆盖全局配置)
+            release: Release 过滤, 如 'R18'
+            series: Series 过滤, 如 '38'
+            doc_type: 文档类型过滤, '3gpp' 或 'oran'
         """
         _top_k = top_k or settings.max_search_results
         # 若启用 reranker, 混合检索用更大的候选池 (reranker 从 N 条中精选 top_k)
@@ -253,7 +300,8 @@ class RAGPipeline:
             self._retriever._final_top_k = pool_size
         expanded_query = self._expand_query(query)
         query_embedding = self._get_query_embedding(expanded_query)
-        results = self._retriever.search(expanded_query, query_embedding)
+        filter_expr = self._build_filter_expr(release=release, series=series, doc_type=doc_type)
+        results = self._retriever.search(expanded_query, query_embedding, filter_expr=filter_expr)
 
         # Cross-Encoder Reranker 精排 (先执行, 提升候选池质量)
         results = self._rerank(expanded_query, results, _top_k, reranker_enabled=reranker_enabled)
@@ -268,9 +316,9 @@ class RAGPipeline:
 
         return results
 
-    def _expand_query(self, query: str) -> str:
+    def _expand_query(self, query: str, history: list[dict[str, str]] | None = None) -> str:
         try:
-            messages = build_query_expansion_prompt(query)
+            messages = build_query_expansion_prompt(query, history)
             expanded = self._llm.chat(messages)
             if expanded and len(expanded) > 5:
                 return expanded
@@ -366,6 +414,128 @@ class RAGPipeline:
             logger.warning("嵌入生成失败，使用零向量: %s", e)
             return np.zeros(1024, dtype=np.float32)
 
+    # ── 分类列举多角度分解检索 ──
+
+    def _taxonomy_decompose_search(
+        self,
+        query: str,
+        query_embedding: np.ndarray,
+        existing_results: list[RetrievalResult],
+        filter_expr: str | None = None,
+    ) -> list[RetrievalResult]:
+        """对分类列举类查询做多角度分解检索.
+
+        用 LLM 将问题分解为 3-5 个子查询 (每子查询覆盖一个类别维度),
+        并行执行子查询搜索, 结果合并去重. 原始检索结果排在前面,
+        子查询补充结果追加到后面.
+        """
+        sub_queries = self._generate_taxonomy_sub_queries(query)
+        if not sub_queries:
+            return existing_results
+
+        seen_ids = {str(r.chunk_id) for r in existing_results}
+        supplement: list[RetrievalResult] = []
+
+        for sub_q in sub_queries:
+            try:
+                sub_embed = self._get_query_embedding(sub_q)
+                # 子查询用较小的 top_k, 避免单子查询占据全部上下文
+                old_final = self._retriever._final_top_k
+                self._retriever._final_top_k = max(settings.max_search_results // 2, 5)
+                sub_results = self._retriever.search(sub_q, sub_embed, filter_expr=filter_expr)
+                self._retriever._final_top_k = old_final
+
+                for r in sub_results:
+                    rid = str(r.chunk_id)
+                    if rid not in seen_ids:
+                        seen_ids.add(rid)
+                        r._source_tag = "taxonomy"
+                        r._sub_query = sub_q[:80]
+                        supplement.append(r)
+            except Exception as e:
+                logger.warning("分类子查询检索失败 [%s]: %s", sub_q[:40], e)
+
+        if supplement:
+            logger.info(
+                "分类分解检索: %d 子查询 → +%d 补充 (原始 %d → 总计 %d)",
+                len(sub_queries), len(supplement),
+                len(existing_results), len(existing_results) + len(supplement),
+            )
+
+        return list(existing_results) + supplement
+
+    def _generate_taxonomy_sub_queries(self, query: str) -> list[str]:
+        """用 LLM 将分类列举问题分解为 3-5 个覆盖不同维度的子查询."""
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是一个 3GPP 规范检索专家。将用户的分类列举问题分解为多个具体子查询，"
+                    "每个子查询覆盖一个类别/维度。\n\n"
+                    "规则：\n"
+                    "1. 每个子查询应该是独立、可直接检索的关键词组合\n"
+                    "2. 子查询应覆盖用户问题的所有类别，不遗漏\n"
+                    "3. 使用 3GPP 规范术语（如 PRACH preamble, RACH occasion）\n"
+                    "4. 输出每行一个子查询，不要编号，不要解释\n"
+                    "5. 最多 5 个子查询"
+                ),
+            },
+            {"role": "user", "content": f"将以下问题分解为覆盖所有维度的子查询：\n\n{query}"},
+        ]
+        try:
+            response = self._llm.chat(messages, temperature=0.3, max_tokens=300)
+            sub_queries = [
+                line.strip()
+                for line in response.strip().split("\n")
+                if line.strip() and len(line.strip()) > 5
+            ]
+            if sub_queries:
+                logger.info("分类子查询生成: %d 条 → %s", len(sub_queries),
+                             [q[:50] for q in sub_queries])
+            return sub_queries[:5]
+        except Exception as e:
+            logger.warning("分类子查询生成失败: %s", e)
+            return []
+
+    def _expand_adjacent_chunks(
+        self,
+        results: list[RetrievalResult],
+        top_n: int = 5,
+        window: int = 2,
+    ) -> None:
+        """为 Top-N 命中 chunk 拉取同文档相邻 chunk，扩充上下文.
+
+        解决表格/列表类内容因 chunk 碎片化导致的召回不完整问题。
+        对每个命中 chunk，查询同 doc_id 下 chunk_index ± window 的相邻块，
+        将其文本存入 adjacent_chunks 字段，供 to_context_str 拼入 LLM 上下文。
+
+        Args:
+            results: 检索结果列表（原地修改 adjacent_chunks 字段）.
+            top_n: 仅为前 top_n 条结果拉取相邻 chunk (控制延迟).
+            window: 左右各取 window 个相邻 chunk.
+        """
+        if not hasattr(self._store, 'get_adjacent_chunks'):
+            return
+
+        expanded = 0
+        for r in results[:top_n]:
+            if not r.doc_id or r.chunk_index < 0:
+                continue
+            try:
+                adjacent = self._store.get_adjacent_chunks(
+                    r.doc_id, r.chunk_index, window=window,
+                )
+                if adjacent:
+                    r.adjacent_chunks = [a.text for a in adjacent]
+                    expanded += 1
+            except Exception as e:
+                logger.debug("相邻 chunk 查询跳过 (doc=%s idx=%d): %s",
+                             r.doc_id, r.chunk_index, e)
+
+        if expanded > 0:
+            logger.info("相邻 chunk 上下文扩展: %d/%d 条结果已扩充 (±%d)",
+                        expanded, min(len(results), top_n), window)
+
     def _resolve_cross_refs(
         self,
         results: list[RetrievalResult],
@@ -428,6 +598,47 @@ class RAGPipeline:
         logger.info("交叉引用解析完成: %d 原始 + %d 补充 = %d 条",
                      len(results), len(supplement), len(merged))
         return merged
+
+    @staticmethod
+    def _build_filter_expr(
+        release: str | None = None,
+        series: str | None = None,
+        doc_type: str | None = None,
+    ) -> str | None:
+        """构建 Milvus 标量过滤表达式.
+
+        Release/Series 仅对 3GPP 有意义 (ORAN 无此概念).
+        - 未选 doc_type 时: release/series 只约束 3GPP, ORAN 始终放行
+        - 选 doc_type=3gpp 时: release/series 正常生效
+        - 选 doc_type=oran 时: release/series 忽略
+        """
+        has_filter = release or series
+
+        if doc_type == "oran":
+            # ORAN 明确选中: 仅按 doc_type 过滤
+            return 'doc_type == "oran"'
+
+        if doc_type == "3gpp":
+            # 3GPP 明确选中: release/series 正常生效
+            parts: list[str] = []
+            if release:
+                parts.append(f'release == "{release}"')
+            if series:
+                parts.append(f"series == {series}")
+            parts.append('doc_type == "3gpp"')
+            return " && ".join(parts)
+
+        # doc_type 未选: release/series 只约束 3GPP, ORAN 放行
+        if has_filter:
+            parts_3gpp: list[str] = []
+            if release:
+                parts_3gpp.append(f'release == "{release}"')
+            if series:
+                parts_3gpp.append(f"series == {series}")
+            parts_3gpp.append('doc_type == "3gpp"')
+            return f'(({" && ".join(parts_3gpp)}) || doc_type == "oran")'
+
+        return None
 
     def _warmup(self) -> None:
         """预热嵌入模型，避免首次查询加载延迟."""
