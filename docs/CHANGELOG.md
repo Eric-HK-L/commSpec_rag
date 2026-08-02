@@ -130,9 +130,9 @@
 **涉及文件（13 个）：**
 
 - `docs/CHANGELOG.md`（新增）、`docs/README.md`（新增）、`docs/design/ingestion-pipeline-deep-dive.md`（新增）、`docs/optimization/chunk-llm-summary.md`（新增）
-- `docs/technical-whitepaper/01-项目概览与目标.md`、`01d-故障排查手册.md`、`02-系统架构设计.md`、`03-关键技术选型.md`、`07-文档摄入管线.md`、`附录D-演进路线图.md`
+- `docs/technical-whitepaper/01-项目概览与目标.md`、`docs/technical-whitepaper/01d-故障排查手册.md`、`docs/technical-whitepaper/02-系统架构设计.md`、`docs/technical-whitepaper/03-关键技术选型.md`、`docs/technical-whitepaper/07-文档摄入管线.md`、`docs/technical-whitepaper/附录D-演进路线图.md`
 - 移动：`docs/architecture.md` → `docs/design/architecture.md`、`docs/hardware-compatibility.md` → `docs/design/hardware-compatibility.md`、`docs/offline-deployment.md` → `docs/deployment/offline-deployment.md`
-- 重命名：`docs/open_source/3gpp-rag-rel18 vs 3gpp-rag-project.md` → `3gpp-rag-rel18-vs-3gpp-rag-project.md`
+- 重命名：`docs/open_source/3gpp-rag-rel18 vs 3gpp-rag-project.md` → `docs/open_source/3gpp-rag-rel18-vs-3gpp-rag-project.md`
 - `README.md` — 文档链接与目录树同步
 
 ### 8. 问题排查记录
