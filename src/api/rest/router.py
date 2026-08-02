@@ -27,7 +27,7 @@ from src.retriever.search import RetrievalResult
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1", tags=["3GPP RAG"])
+router = APIRouter(prefix="/api/v1", tags=["CommSpec RAG"])
 
 _pipeline: RAGPipeline | None = None
 
@@ -365,59 +365,71 @@ async def delete_document(doc_id: str) -> APIResponse[dict]:
 
 # ── SSE 流式生成 ──
 
+
+def _serialize_source(r) -> dict:
+    """将 RetrievalResult 序列化为 SSE sources 事件数据."""
+    return {
+        "chunk_id": str(r.chunk_id),
+        "text": r.text[:300],
+        "score": round(r.score, 4),
+        "spec_number": r.spec_number,
+        "parent_section_id": r.parent_section_id,
+        "parent_title": r.parent_title,
+        "section_number": getattr(r, 'section_number', '') or '',
+        "section_title": getattr(r, 'section_title', '') or '',
+        "section_path": getattr(r, 'section_path', '') or '',
+        "content_type": getattr(r, 'content_type', '') or '',
+        "spec_role": getattr(r, 'spec_role', '') or '',
+        "topic_domain": getattr(r, 'topic_domain', '') or '',
+    }
+
+
 @router.post("/ask/stream")
 async def ask_stream_endpoint(req: AskRequest):
-    """SSE 流式生成 — 走完整 Pipeline，逐词推送 LLM 输出."""
+    """SSE 流式生成 — 检索后边生成边推送 LLM 输出 (真流式).
+
+    Pipeline 在后台线程执行, 通过 asyncio.Queue 传递事件,
+    避免阻塞事件循环; 不再人为限速 (移除 sleep).
+    """
     pipeline = get_pipeline()
 
     async def event_stream():
-        import re
         t0 = time.time()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=256)
+
+        def worker():
+            try:
+                for evt_type, payload in pipeline.ask_stream(
+                    req.query,
+                    reranker_enabled=req.reranker_enabled,
+                    history=[h.model_dump() for h in req.history] if req.history else None,
+                    release=req.release,
+                    series=req.series,
+                    doc_type=req.doc_type,
+                ):
+                    if evt_type == "sources":
+                        queue.put_nowait({"type": "sources", "data": [_serialize_source(r) for r in payload]})
+                    elif evt_type == "chunk":
+                        queue.put_nowait({"type": "chunk", "content": payload})
+                    elif evt_type == "done":
+                        payload["elapsed_ms"] = round((time.time() - t0) * 1000)
+                        queue.put_nowait({"type": "done", **payload})
+            except Exception as e:
+                logger.error("SSE 流式失败: %s", e)
+                queue.put_nowait({"type": "error", "detail": str(e)})
+            finally:
+                queue.put_nowait(None)
+
+        # 后台线程执行同步 Pipeline, 不阻塞事件循环
+        task = asyncio.create_task(asyncio.to_thread(worker))
         try:
-            # 走完整 Pipeline (检索+扩展+交叉引用+多跳+验证+生成)
-            response = pipeline.ask(
-                req.query,
-                reranker_enabled=req.reranker_enabled,
-                history=[h.model_dump() for h in req.history] if req.history else None,
-                release=req.release,
-                series=req.series,
-                doc_type=req.doc_type,
-            )
-
-            # 1. 推送 sources (来自完整 Pipeline 的检索结果)
-            sources_data = [
-                {
-                    "chunk_id": str(r.chunk_id),
-                    "text": r.text[:300],
-                    "score": round(r.score, 4),
-                    "spec_number": r.spec_number,
-                    "parent_section_id": r.parent_section_id,
-                    "parent_title": r.parent_title,
-                    "section_number": getattr(r, 'section_number', '') or '',
-                    "section_title": getattr(r, 'section_title', '') or '',
-                    "section_path": getattr(r, 'section_path', '') or '',
-                    "content_type": getattr(r, 'content_type', '') or '',
-                    "spec_role": getattr(r, 'spec_role', '') or '',
-                    "topic_domain": getattr(r, 'topic_domain', '') or '',
-                }
-                for r in response.sources
-            ]
-            yield f"data: {json.dumps({'type': 'sources', 'data': sources_data}, ensure_ascii=False)}\n\n"
-
-            # 2. 逐词推送 answer (按空白+标点边界切分, 避免中文字符被截断)
-            words = re.split(r'(\s+)', response.answer)
-            for word in words:
-                if word:
-                    yield f"data: {json.dumps({'type': 'chunk', 'content': word}, ensure_ascii=False)}\n\n"
-                    await asyncio.sleep(0.02)
-
-            # 3. 完成
-            dt = (time.time() - t0) * 1000
-            yield f"data: {json.dumps({'type': 'done', 'elapsed_ms': round(dt), 'warnings': response.warnings, 'verified': response.verified}, ensure_ascii=False)}\n\n"
-
-        except Exception as e:
-            logger.error("SSE 流式失败: %s", e)
-            yield f"data: {json.dumps({'type': 'error', 'detail': str(e)}, ensure_ascii=False)}\n\n"
+            while True:
+                evt = await queue.get()
+                if evt is None:
+                    break
+                yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
+        finally:
+            task.cancel()
 
     return StreamingResponse(
         event_stream(),
@@ -511,7 +523,7 @@ async def reference_graph(
 ):
     """返回指定规范的引用关系图.
 
-    扫描该规范所有 chunk 的文本, 提取其中的 3GPP 规范引用
+    扫描该规范所有 chunk 的文本, 提取其中的规范引用
     (如 "TS 38.413 §8.3.1"), 按被引用规范聚合返回.
     """
     pipeline = get_pipeline()

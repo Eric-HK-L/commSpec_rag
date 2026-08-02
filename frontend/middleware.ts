@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const AUTH_COOKIE = "admin_auth";
-const AUTH_VALUE = "3gpp_admin_authenticated";
+const AUTH_VALUE = "commspec_admin_authenticated";
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;

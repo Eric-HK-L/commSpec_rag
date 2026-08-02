@@ -42,7 +42,7 @@ CommSpec RAG 是一个**生产级 3GPP 通信标准专用 RAG 系统**，提供�
 | LLM 集成 | OpenAI SDK（base_url + api_key + model 三参数统一切换） |
 | 嵌入模型 | BGE-M3（多语言，1024-dim，稠密+稀疏双向量） |
 | 向量数据库 | Milvus 2.4+（Dense + BM25 混合检索；BGE-M3 原生 sparse 向量待迁移）|
-| 文档处理 | Docling（DOCX → Markdown）|
+| 文档处理 | Pandoc（DOCX → Markdown）|
 | 前端 | Next.js 16（React 19 + Tailwind CSS 4）+ react-markdown |
 | 部署 | Docker Compose（etcd + MinIO + Milvus + API + Frontend）|
 
@@ -124,7 +124,7 @@ CommSpec RAG 是一个**生产级 3GPP 通信标准专用 RAG 系统**，提供�
 src/
 ├── config/settings.py          ← 全局配置 (Pydantic)
 ├── ingestion/                  ← 文档摄入管线
-│   ├── extractor.py            ← DOCX → Markdown (Docling)
+│   ├── extractor.py            ← DOCX → Markdown (Pandoc)
 │   ├── splitter.py             ← 智能分块 (标题感知 + Grid Table 行组拆分 + 字节门禁)
 │   ├── embedder.py             ← 批量嵌入生成
 │   ├── orchestrator.py         ← 全流程编排
@@ -207,7 +207,7 @@ tests/
 
 #### 3.2.2 核心模块
 
-**[extractor.py](file://src/ingestion/extractor.py)** — DOCX → Markdown 转换（Docling 管线），保留表格、列表、公式结构。
+**[extractor.py](file://src/ingestion/extractor.py)** — DOCX → Markdown 转换（Pandoc 管线），保留表格、列表、公式结构。
 
 **[splitter.py](file://src/ingestion/splitter.py)** — 三层自适应分块引擎，零信息丢失：
 
@@ -537,7 +537,7 @@ DOCX 文件 (data/documents/R18/)
     │
     ▼
 ┌──────────────────────────────────────┐
-│ Extractor (Docling)                  │
+│ Extractor (Pandoc)                  │
 │   .docx → .md (保留表格/列表/公式)     │
 ├──────────────────────────────────────┤
 │ Splitter (HeaderAwareSplitter)        │
@@ -626,7 +626,7 @@ Milvus 2.4+ 原生支持 Dense + BM25 双路检索，FAISS 不支持 BM25。在 
 
 ### 离线部署
 
-完整的离线部署方案参见 **[docs/offline-deployment.md](./offline-deployment.md)**，支持外网制备 → U 盘/网盘传输 → 内网一键安装。
+完整的离线部署方案参见 **[docs/deployment/offline-deployment.md](../deployment/offline-deployment.md)**，支持外网制备 → U 盘/网盘传输 → 内网一键安装。
 
 ---
 
@@ -642,4 +642,4 @@ Milvus 2.4+ 原生支持 Dense + BM25 双路检索，FAISS 不支持 BM25。在 
 | **Chat3GPP** | RRF 融合算法（`1/(k+rank+1)`），LangChain RAG 集成，提示词构造模式 |
 | **3GPP MCP Server** | MCP 工具设计模式，智能缓存策略（<500ms），TSpec-LLM 对接 |
 
-> **相关文档**：[硬件兼容性指南](./hardware-compatibility.md) | [离线部署手册](./offline-deployment.md)
+> **相关文档**：[硬件兼容性指南](./hardware-compatibility.md) | [离线部署手册](../deployment/offline-deployment.md)

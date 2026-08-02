@@ -51,18 +51,18 @@ def needs_translation(lang: str) -> bool:
 
 # ── 翻译提示词 ──
 
-_TRANSLATE_TO_EN_SYSTEM = """You are a professional 3GPP telecom standards translator.
+_TRANSLATE_TO_EN_SYSTEM = """You are a professional telecom standards translator (3GPP / O-RAN).
 Translate the user's query into accurate, technical English.
 Rules:
-1. Preserve all 3GPP specification numbers (TS xx.xxx, TR xx.xxx)
+1. Preserve all specification numbers (TS xx.xxx, TR xx.xxx)
 2. Preserve all technical abbreviations (NR, LTE, PUSCH, DMRS, QoS, RRC, MAC, etc.)
-3. Use precise 3GPP terminology
+3. Use precise telecom standards terminology
 4. Output ONLY the English translation, no explanations"""
 
-_TRANSLATE_FROM_EN_SYSTEM = """You are a professional 3GPP telecom standards translator.
+_TRANSLATE_FROM_EN_SYSTEM = """You are a professional telecom standards translator (3GPP / O-RAN).
 Translate the following English answer into {target_lang_name}.
 Rules:
-1. Preserve all 3GPP specification numbers (TS xx.xxx, TR xx.xxx)
+1. Preserve all specification numbers (TS xx.xxx, TR xx.xxx)
 2. Preserve all technical abbreviations (NR, LTE, PUSCH, DMRS, QoS, RRC, MAC, etc.)
 3. Use natural, fluent {target_lang_name}
 4. Output ONLY the translated answer, no explanations"""
@@ -93,7 +93,7 @@ def translate_to_english(
     ]
 
     try:
-        result = llm.chat(messages, temperature=0.0, max_tokens=300)
+        result = llm.chat(messages, temperature=0.0, max_tokens=512)
         translated = result.strip()
         if translated and len(translated) > 3:
             logger.info("查询翻译: %s → EN (%.60s)", source_lang, translated)
@@ -131,7 +131,7 @@ def translate_from_english(
     ]
 
     try:
-        result = llm.chat(messages, temperature=0.1, max_tokens=4096)
+        result = llm.chat(messages, temperature=0.1, max_tokens=8192)
         translated = result.strip()
         if translated and len(translated) > 10:
             logger.info("回答回译: EN → %s (%d chars)", target_lang, len(translated))

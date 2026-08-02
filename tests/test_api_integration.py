@@ -52,6 +52,26 @@ def mock_pipeline():
         )
     pipeline.ask = _ask
 
+    # mock ask_stream() — 流式生成器: sources → chunks → done
+    def _ask_stream(query, reranker_enabled=True, **kwargs):
+        yield ("sources", [
+            RetrievalResult(
+                chunk_id="1", text="PDU Session Resource Setup NGAP",
+                score=0.92, doc_id="d1", series=38,
+                spec_number="38.413", release="R18",
+                parent_section_id="8.3.1", parent_title="PDU Session Setup",
+                chunk_index=0,
+            ),
+        ])
+        yield ("chunk", "The PDU Session Resource Setup is defined")
+        yield ("chunk", " in TS 38.413 §8.3.1.")
+        yield ("done", {
+            "answer": "The PDU Session Resource Setup is defined in TS 38.413 §8.3.1.",
+            "verified": True, "warnings": [], "coverage": 0.75,
+            "expanded_query": "PDU session setup 38.413",
+        })
+    pipeline.ask_stream = _ask_stream
+
     # mock search() 返回
     def _search(query, top_k=10, reranker_enabled=True, **kwargs):
         return [
@@ -423,10 +443,11 @@ class TestAskStreamEndpoint:
         body = resp.text
         assert 'data:' in body
         # 应包含 sources + chunks + done
-        assert '"type"' in body
         assert '"type":"sources"' in body or '"type": "sources"' in body
-        # done 事件
+        assert '"type":"chunk"' in body or '"type": "chunk"' in body
         assert '"type":"done"' in body or '"type": "done"' in body
+        # done 事件携带完整回答
+        assert "TS 38.413" in body
 
     def test_stream_query_too_long(self, client):
         resp = client.post("/api/v1/ask/stream", json={
@@ -435,12 +456,16 @@ class TestAskStreamEndpoint:
         assert resp.status_code == 422
 
     def test_stream_pipeline_error(self, client, mock_pipeline):
-        mock_pipeline.ask = MagicMock(side_effect=RuntimeError("Stream error"))
+        def _boom(query, reranker_enabled=True, **kwargs):
+            raise RuntimeError("Stream error")
+            yield  # pragma: no cover
+        mock_pipeline.ask_stream = _boom
         resp = client.post("/api/v1/ask/stream", json={"query": "test"})
         assert resp.status_code == 200
         # SSE 错误以 error 事件返回
         body = resp.text
         assert '"type":"error"' in body or '"type": "error"' in body
+        assert "Stream error" in body
 
 
 # ── 引用图谱端点 ──

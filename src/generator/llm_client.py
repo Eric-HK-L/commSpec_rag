@@ -65,6 +65,34 @@ class LLMClient:
             logger.error("LLM API 调用失败: %s", e)
             raise
 
+    def chat_stream(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ):
+        """流式聊天 — 逐段生成文本 (生成器).
+
+        SSE 问答的核心: 边生成边推送, 用户无需等待完整回答.
+        """
+        try:
+            stream = self._client.chat.completions.create(
+                model=self._model,
+                messages=messages,
+                temperature=temperature if temperature is not None else settings.llm_temperature,
+                max_tokens=max_tokens if max_tokens is not None else settings.llm_max_tokens,
+                stream=True,
+            )
+            for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if delta and delta.content:
+                    yield delta.content
+        except Exception as e:
+            logger.error("LLM 流式 API 调用失败: %s", e)
+            raise
+
     def embed(self, texts: list[str]) -> list[list[float]]:
         """生成文本嵌入 — 根据 EMBEDDING_PROVIDER 使用本地或云端模型."""
         # 本地模式：直接使用 sentence-transformers

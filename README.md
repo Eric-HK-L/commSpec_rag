@@ -68,8 +68,10 @@ commspec_rag_project/
 ├── scripts/                # bulk_ingest, download_specs
 ├── deploy/                 # Dockerfile + docker-compose
 ├── tests/                  # 测试 + 评测集 (70 题)
-├── docs/
-│   └── architecture.md     # 架构文档
+├── docs/                   # 文档中心（见 docs/README.md）
+│   ├── design/             #   架构与设计文档
+│   ├── deployment/         #   部署指南
+│   └── technical-whitepaper/  # 技术白皮书
 ├── data/                   # 运行时数据 (不入库)
 │   ├── documents/R18/      #   3GPP DOCX 源文件 (400 篇)
 │   ├── vectors/            #   向量索引
@@ -190,7 +192,7 @@ python scripts/bulk_ingest.py
 | LLM | OpenAI 兼容 API（GPT-4o / DeepSeek / Qwen） |
 | 嵌入模型 | BAAI/bge-m3（多语言，1024-dim，稠密+稀疏双向量） |
 | 向量数据库 | Milvus 2.4（Dense + Sparse BM25） |
-| 文档处理 | Docling + python-docx + pandoc |
+| 文档处理 | Pandoc + python-docx |
 | API 框架 | FastAPI + Uvicorn |
 | 前端 | Next.js 14 + Tailwind CSS + Recharts |
 | 监控 | prometheus_client |
@@ -206,9 +208,10 @@ python scripts/bulk_ingest.py
 
 | 文档 | 说明 |
 |------|------|
-| [架构设计](./docs/architecture.md) | 系统架构、模块详解、数据流、关键决策 |
-| [离线部署指南](./docs/offline-deployment.md) | 内网环境离线安装（pip wheels + Docker 镜像） |
-| [硬件兼容性](./docs/hardware-compatibility.md) | 跨平台运行指南（Intel / NVIDIA GB10 / Apple Silicon） |
+| [文档中心](./docs/README.md) | 全部文档总索引（设计/部署/白皮书/计划） |
+| [架构设计](./docs/design/architecture.md) | 系统架构、模块详解、数据流、关键决策 |
+| [离线部署指南](./docs/deployment/offline-deployment.md) | 内网环境离线安装（pip wheels + Docker 镜像） |
+| [硬件兼容性](./docs/design/hardware-compatibility.md) | 跨平台运行指南（Intel / NVIDIA GB10 / Apple Silicon） |
 | [Phase 计划](./docs/plans/) | 项目演进路线图（Phase 1-4） |
 
 ## 📄 License

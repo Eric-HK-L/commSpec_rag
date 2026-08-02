@@ -45,7 +45,7 @@ export default function DocumentsPage() {
         >
           <span className="text-lg leading-none">←</span> 返回首页
         </Link>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">3GPP 规范文档</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">规范文档</h1>
       </div>
 
       {/* 统计栏 */}

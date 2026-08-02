@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""全量/增量摄入脚本 — 遍历 DOCX，走 extract→split→embed→insert.
+"""全量/增量摄入脚本 — 数据源: Markdown 数据集 (marked/) 或 原始 DOCX (original/).
 
-模式:
-  python scripts/bulk_ingest.py                    # 默认：增量模式
+数据源切换 (--source):
+  python scripts/bulk_ingest.py                    # 默认: marked 数据源增量模式
+  python scripts/bulk_ingest.py --source original  # 原始 DOCX (pandoc 转换)
+  python scripts/bulk_ingest.py --source all       # 两者都要 (marked 优先)
   python scripts/bulk_ingest.py --full-rebuild     # 全量重建: drop collection + 清 manifest
+
+目录规划:
+  data/documents/marked/    Markdown 协议数据集 (嵌入默认源)
+  data/documents/original/  原始 DOCX 文档 (pandoc 处理源)
+  data/documents/other/     其他文档 (不摄入)
 
 版本管理:
   - 大版本共存: R18 和 R19 同一规范各有独立 key (spec_number|release)
@@ -30,7 +37,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.config import settings, ingestion_config  # noqa: E402
 from src.ingestion.embedder import BatchEmbedder  # noqa: E402
 from src.ingestion.embedding_cache import EmbeddingCache  # noqa: E402
-from src.ingestion.extractor import DoclingExtractor  # noqa: E402
+from src.ingestion.extractor import MarkdownSourceExtractor, PandocExtractor  # noqa: E402
 from src.ingestion.manifest import (  # noqa: E402
     IngestionManifest,
     compare_versions,
@@ -80,8 +87,8 @@ def parse_spec_from_stem(stem: str) -> tuple[str, str | None]:
     """
     # O-RAN 文件检测
     if stem.upper().startswith("O-RAN"):
-        from src.ingestion.extractor import DoclingExtractor
-        spec_id, release, version = DoclingExtractor.parse_oran_filename(stem + ".docx")
+        from src.ingestion.extractor import PandocExtractor
+        spec_id, release, version = PandocExtractor.parse_oran_filename(stem + ".docx")
         return (spec_id, version) if spec_id else ("", version if version else None)
     # 1. 先去分卷后缀 (必须在提取版本前完成，否则 _s05 被误认为版本)
     base = _SECTION_SUFFIX_RE.sub("", stem)
@@ -114,10 +121,10 @@ def parse_spec_from_stem(stem: str) -> tuple[str, str | None]:
 
 
 def find_docx_files(doc_dir: str, series_filter: list[str] | None = None) -> list[Path]:
-    """收集统一文档目录下所有 DOCX 文件，按 Series 排序.
+    """收集原始 DOCX 文档目录下所有 DOCX 文件，按 Series 排序.
 
-    目录结构: data/documents/R18/{21_series/,22_series/,...}
-              data/documents/ORAN/
+    目录结构: data/documents/original/R18/{21_series/,22_series/,...}
+              data/documents/original/ORAN/
     跳过封面页: _cover.docx 仅含标题/版本信息，无规范正文。
 
     series_filter: 只包含指定 series 目录 (如 ['36','38']), None=全部.
@@ -127,7 +134,7 @@ def find_docx_files(doc_dir: str, series_filter: list[str] | None = None) -> lis
     if not root.exists():
         logger.error("目录不存在: %s", root)
         return []
-    # 3GPP docs: data/documents/R18/...
+    # 3GPP docs: data/documents/original/R18/...
     files_3gpp = sorted(root.rglob("*.docx"), key=lambda p: (p.parent.name, p.name))
     if series_filter:
         valid_dirs = {f"{s}_series" for s in series_filter}
@@ -139,10 +146,9 @@ def find_docx_files(doc_dir: str, series_filter: list[str] | None = None) -> lis
             "Series 过滤: %s → 匹配 %d 个 3GPP 文件",
             series_filter, len(files_3gpp),
         )
-    # ORAN docs: 同时扫描 ORAN 子目录 (优先 data/documents/ORAN, 其次 DOCUMENTS_DIR/ORAN)
+    # ORAN docs: 同时扫描 ORAN 子目录
     files_oran: list[Path] = []
-    oran_dirs = [root.parent / "ORAN", root / "ORAN"]
-    for oran_dir in oran_dirs:
+    for oran_dir in [root / "ORAN", root.parent / "ORAN"]:
         if oran_dir.exists():
             found = sorted(oran_dir.rglob("*.docx"), key=lambda p: p.name)
             files_oran.extend(found)
@@ -152,6 +158,23 @@ def find_docx_files(doc_dir: str, series_filter: list[str] | None = None) -> lis
     # 跳过仅封面页（无正文内容）
     all_files = [f for f in all_files if "_cover" not in f.stem.lower() and "cover" != f.stem.lower()]
     return all_files
+
+
+def find_markdown_files(md_dir: str) -> list[Path]:
+    """收集 Markdown 数据集目录下所有 .md 文件.
+
+    数据集结构: data/documents/marked/R18/{38_series/38865/raw.md, ...}
+                data/documents/marked/ORAN/{O-RAN.WGx.../raw.md}
+
+    返回按路径排序的文件列表 (marked 优先于 original 摄入).
+    """
+    root = Path(md_dir)
+    if not root.exists():
+        logger.error("Markdown 数据集目录不存在: %s", root)
+        return []
+    files = sorted(root.rglob("*.md"), key=lambda p: str(p))
+    logger.info("Markdown 数据集: %s (%d 文件)", root, len(files))
+    return files
 
 
 # ── 单篇处理 ──
@@ -212,7 +235,7 @@ def _normalize_chunk_sizes(all_chunks: list, splitter: HeaderAwareSplitter) -> l
 
 def process_single_docx(
     docx: Path,
-    extractor: DoclingExtractor,
+    extractor: PandocExtractor,
     splitter: HeaderAwareSplitter,
 ) -> tuple[list, str, str, str, str]:
     """处理单篇 DOCX: 提取 + 分块.
@@ -265,38 +288,81 @@ def process_single_docx(
     return chunks, spec_number, release, version, sha
 
 
+def process_single_markdown(
+    md_file: Path,
+    extractor: MarkdownSourceExtractor,
+    splitter: HeaderAwareSplitter,
+) -> tuple[list, str, str, str, str]:
+    """处理单篇 Markdown 数据集文件: 读取 + 分块.
+
+    返回 (chunks, spec_number, release, version, sha256).
+    spec_number/version 空字符串表示解析失败.
+    """
+    sha = compute_sha256(md_file)
+    result = extractor.extract_file(md_file)
+    spec_number = result.spec_number
+    version = result.version
+    release = result.release
+
+    # 判断文档类型
+    is_oran = spec_number.upper().startswith("O-RAN") or "ORAN" in str(md_file.parent).upper()
+    doc_type = "oran" if is_oran else "3gpp"
+
+    if not release:
+        release = version if version else ("ORAN" if is_oran else "R18")
+
+    if not result.markdown:
+        return [], spec_number, release, version, sha
+
+    # doc_id 用数据集目录名 (如 38865 / O-RAN.WG4.TS.CUS.0-R005-v20.00)
+    # 避免所有 raw.md 使用相同的 stem 作为 id
+    doc_meta = {
+        "doc_id": md_file.parent.name,
+        "series": int(spec_number.split(".")[0]) if spec_number and not is_oran else 0,
+        "spec_number": spec_number,
+        "release": release,
+        "doc_type": doc_type,
+    }
+    chunks = splitter.split_document(result.markdown, doc_meta)
+    for chunk in chunks:
+        meta = classify_chunk(chunk.text, spec_number, chunk.parent_title)
+        chunk.content_type = meta["content_type"]
+        chunk.spec_role = meta["spec_role"]
+        chunk.topic_domain = meta["topic_domain"]
+    return chunks, spec_number, release, version, sha
+
+
 # ── 增量模式主逻辑 ──
 
 def run_incremental(
-    docx_files: list[Path],
-    extractor: DoclingExtractor,
+    file_sources: list[tuple[Path, str]],
+    process_fn: Callable[[Path, str], tuple[list, str, str, str, str]],
+    spec_fn: Callable[[Path, str], tuple[str, str]],
     splitter: HeaderAwareSplitter,
     store: MilvusStore,
     manifest: IngestionManifest,
 ) -> dict:
-    """增量摄入: 只处理新增/修改的文件."""
-    stats = {"total": len(docx_files), "skipped": 0, "replaced": 0, "new": 0, "failed": 0, "chunks": 0}
+    """增量摄入: 只处理新增/修改的文件.
+
+    Args:
+        file_sources: [(文件路径, 数据源类型 'marked'|'original'), ...]
+        process_fn: 单文件处理函数, 返回 (chunks, spec_number, release, version, sha).
+        spec_fn: 从文件提取 (spec_number, release) 用于孤儿检测.
+    """
+    stats = {"total": len(file_sources), "skipped": 0, "replaced": 0, "new": 0, "failed": 0, "chunks": 0}
     all_chunks: list = []
 
-    # 收集当前文件系统的 spec_number+release (从目录名推断)
+    # 收集当前文件系统的 spec_number+release (从目录名/内容推断)
     current_specs: set[tuple[str, str]] = set()
-    for docx in docx_files:
-        sn, _ = parse_spec_from_stem(docx.stem)
-        # 尝试从父目录名推断 release
-        release = "R18"
-        for pn in [p.name for p in docx.parents]:
-            if pn.upper().startswith("R") and len(pn) <= 4 and pn[1:].isdigit():
-                release = pn.upper()
-                break
+    for docx, _src in file_sources:
+        sn, release = spec_fn(docx, _src)
         current_specs.add((sn, release))
 
-    for i, docx in enumerate(docx_files):
+    for i, (docx, src) in enumerate(file_sources):
         try:
-            chunks, spec_number, release, version, sha = process_single_docx(
-                docx, extractor, splitter,
-            )
+            chunks, spec_number, release, version, sha = process_fn(docx, src)
             if not spec_number:
-                logger.warning("[%d/%d] 无法解析规范编号: %s", i + 1, len(docx_files), docx.name)
+                logger.warning("[%d/%d] 无法解析规范编号: %s", i + 1, len(file_sources), docx.name)
                 stats["failed"] += 1
                 continue
 
@@ -309,13 +375,13 @@ def run_incremental(
                 # 已存在 → 检查是否需要替换
                 if compare_versions(version, existing.latest_version) <= 0:
                     if sha == existing.sha256:
-                        logger.debug("[%d/%d] 跳过（未变）: %s", i + 1, len(docx_files), docx.name)
+                        logger.debug("[%d/%d] 跳过（未变）: %s", i + 1, len(file_sources), docx.name)
                         stats["skipped"] += 1
                         continue
                     else:
                         logger.warning(
                             "[%d/%d] 版本未升级但内容已变 (%s): %s, 跳过",
-                            i + 1, len(docx_files), version, docx.name,
+                            i + 1, len(file_sources), version, docx.name,
                         )
                         stats["skipped"] += 1
                         continue
@@ -323,7 +389,7 @@ def run_incremental(
                 # 新版本 > 旧版本 → 替换
                 logger.info(
                     "[%d/%d] 版本升级 %s→%s: %s",
-                    i + 1, len(docx_files), existing.latest_version, version, docx.name,
+                    i + 1, len(file_sources), existing.latest_version, version, docx.name,
                 )
                 count = store.delete_by_filter(
                     f'spec_number == "{spec_number}" && release == "{release}"'
@@ -331,11 +397,11 @@ def run_incremental(
                 logger.info("  已删除旧 chunks: %d 条", count)
                 stats["replaced"] += 1
             else:
-                logger.info("[%d/%d] 新增: %s (%s %s)", i + 1, len(docx_files), docx.name, spec_number, release)
+                logger.info("[%d/%d] 新增: %s (%s %s)", i + 1, len(file_sources), docx.name, spec_number, release)
                 stats["new"] += 1
 
             if not chunks:
-                logger.warning("[%d/%d] 空内容: %s", i + 1, len(docx_files), docx.name)
+                logger.warning("[%d/%d] 空内容: %s", i + 1, len(file_sources), docx.name)
                 manifest.mark(spec_number, release, version, str(docx), sha, 0)
                 stats["failed"] += 1
                 continue
@@ -346,12 +412,12 @@ def run_incremental(
             if (i + 1) % 50 == 0:
                 logger.info(
                     "[%d/%d] 进度: %d 跳过 / %d 新增 / %d 替换 / %d chunks",
-                    i + 1, len(docx_files),
+                    i + 1, len(file_sources),
                     stats["skipped"], stats["new"], stats["replaced"], len(all_chunks),
                 )
 
         except Exception as e:
-            logger.error("[%d/%d] 处理失败 %s: %s", i + 1, len(docx_files), docx.name, e)
+            logger.error("[%d/%d] 处理失败 %s: %s", i + 1, len(file_sources), docx.name, e)
             stats["failed"] += 1
 
     # 清理孤儿: 清单中有但文件系统已删除的
@@ -371,24 +437,22 @@ def run_incremental(
 # ── 全量重建 ──
 
 def run_full_rebuild(
-    docx_files: list[Path],
-    extractor: DoclingExtractor,
+    file_sources: list[tuple[Path, str]],
+    process_fn: Callable[[Path, str], tuple[list, str, str, str, str]],
     splitter: HeaderAwareSplitter,
     store: MilvusStore,
     manifest: IngestionManifest,
 ) -> dict:
     """全量重建: drop collection + 清 manifest，然后摄入全部."""
-    stats = {"total": len(docx_files), "skipped": 0, "replaced": 0, "new": 0, "failed": 0, "chunks": 0}
+    stats = {"total": len(file_sources), "skipped": 0, "replaced": 0, "new": 0, "failed": 0, "chunks": 0}
     all_chunks: list = []
 
     manifest.clear()
     logger.info("已清空清单，开始全量重建 (drop collection)")
 
-    for i, docx in enumerate(docx_files):
+    for i, (docx, src) in enumerate(file_sources):
         try:
-            chunks, spec_number, release, version, sha = process_single_docx(
-                docx, extractor, splitter,
-            )
+            chunks, spec_number, release, version, sha = process_fn(docx, src)
             if not spec_number or not chunks:
                 stats["failed"] += 1
                 if spec_number:
@@ -402,11 +466,11 @@ def run_full_rebuild(
             if (i + 1) % 50 == 0:
                 logger.info(
                     "[%d/%d] 已提取 %d chunks (%d 篇)",
-                    i + 1, len(docx_files), len(all_chunks), stats["new"],
+                    i + 1, len(file_sources), len(all_chunks), stats["new"],
                 )
 
         except Exception as e:
-            logger.error("[%d/%d] 处理失败 %s: %s", i + 1, len(docx_files), docx.name, e)
+            logger.error("[%d/%d] 处理失败 %s: %s", i + 1, len(file_sources), docx.name, e)
             stats["failed"] += 1
 
     manifest.save()
@@ -628,9 +692,20 @@ def main():
         help="全量重建: drop collection + 清空清单后重新摄入全部",
     )
     parser.add_argument(
+        "--source",
+        choices=["marked", "original", "all"],
+        default="marked",
+        help="数据源: marked=Markdown 数据集(默认), original=原始 DOCX(pandoc), all=全部(marked 优先)",
+    )
+    parser.add_argument(
         "--doc-dir",
-        default=str(settings.documents_abs_dir),
-        help="文档根目录 (默认: 来自 DOCUMENTS_DIR 配置)",
+        default=str(settings.documents_original_dir),
+        help=f"原始 DOCX 文档目录 (默认: {settings.documents_original_dir})",
+    )
+    parser.add_argument(
+        "--marked-dir",
+        default=str(settings.documents_marked_dir),
+        help=f"Markdown 数据集目录 (默认: {settings.documents_marked_dir})",
     )
     parser.add_argument(
         "--series",
@@ -646,19 +721,26 @@ def main():
     args = parser.parse_args()
 
     t_start = time.time()
-    doc_dir = args.doc_dir
     full_rebuild = args.full_rebuild
     checkpoint_path = settings.checkpoint_path
 
     series_filter = args.series if args.series is not None and len(args.series) > 0 else None
-    docx_files = find_docx_files(doc_dir, series_filter=series_filter)
-    logger.info("找到 %d 个 DOCX 文件", len(docx_files))
 
-    if not docx_files:
-        logger.error("无 DOCX 文件")
+    # 按数据源收集文件: [(路径, 'marked'|'original'), ...]
+    file_sources: list[tuple[Path, str]] = []
+    if args.source in ("marked", "all"):
+        file_sources += [(p, "marked") for p in find_markdown_files(args.marked_dir)]
+    if args.source in ("original", "all"):
+        file_sources += [(p, "original") for p in find_docx_files(args.doc_dir, series_filter=series_filter)]
+    logger.info("数据源 %s: 共 %d 个文件 (marked %d / original %d)",
+                args.source, len(file_sources),
+                sum(1 for _, s in file_sources if s == "marked"),
+                sum(1 for _, s in file_sources if s == "original"))
+
+    if not file_sources:
+        logger.error("无待处理文件 (--source=%s)", args.source)
         return
 
-    extractor = DoclingExtractor()
     splitter = HeaderAwareSplitter(
         max_chunk_chars=ingestion_config.chunk_size,
         chunk_overlap_chars=ingestion_config.chunk_overlap,
@@ -668,6 +750,29 @@ def main():
         prose_max_chars=ingestion_config.prose_max_chars,
         max_chunk_hard_chars=ingestion_config.max_chunk_chars,
     )
+
+    # 双 extractor: marked 直接读数据集, original 走 pandoc
+    md_extractor = MarkdownSourceExtractor()
+    docx_extractor = PandocExtractor()
+
+    def process_file(path: Path, src: str) -> tuple[list, str, str, str, str]:
+        if src == "marked":
+            return process_single_markdown(path, md_extractor, splitter)
+        return process_single_docx(path, docx_extractor, splitter)
+
+    def spec_of(path: Path, src: str) -> tuple[str, str]:
+        """孤儿检测用: 从文件提取 (spec_number, release)."""
+        if src == "marked":
+            r = md_extractor.extract_file(path)
+            return r.spec_number, r.release or "R18"
+        sn, _ = parse_spec_from_stem(path.stem)
+        release = "R18"
+        for pn in [p.name for p in path.parents]:
+            if pn.upper().startswith("R") and len(pn) <= 4 and pn[1:].isdigit():
+                release = pn.upper()
+                break
+        return sn, release
+
     manifest = IngestionManifest()
     manifest.load()
 
@@ -680,16 +785,16 @@ def main():
             saved = pickle.load(f)
         all_chunks = saved["chunks"]
         stats = saved["stats"]
-        logger.info("已恢复 %d chunks (DOCX: %d)", len(all_chunks), stats["total"])
+        logger.info("已恢复 %d chunks (源文件: %d)", len(all_chunks), stats["total"])
     else:
         store.connect()
         if full_rebuild:
             store.create_collection(drop_existing=True)
             logger.info("已重建 collection")
-            stats, all_chunks = run_full_rebuild(docx_files, extractor, splitter, store, manifest)
+            stats, all_chunks = run_full_rebuild(file_sources, process_file, splitter, store, manifest)
         else:
             store.create_collection(drop_existing=False)
-            stats, all_chunks = run_incremental(docx_files, extractor, splitter, store, manifest)
+            stats, all_chunks = run_incremental(file_sources, process_file, spec_of, splitter, store, manifest)
         store.disconnect()
 
         # 提取后规范化 chunk 大小 (零超限, 确保 checkpoint 干净)
@@ -736,8 +841,8 @@ def main():
     # 统计
     total_elapsed = time.time() - t_start
     logger.info("=" * 60)
-    logger.info("摄入完成 (模式: %s)", "全量重建" if full_rebuild else "增量")
-    logger.info("  DOCX 总数: %d", stats["total"])
+    logger.info("摄入完成 (模式: %s / 数据源: %s)", "全量重建" if full_rebuild else "增量", args.source)
+    logger.info("  源文件总数: %d", stats["total"])
     logger.info("  新增: %d  替换: %d  跳过: %d  失败: %d", stats["new"], stats["replaced"], stats["skipped"], stats["failed"])
     logger.info("  Chunks: %d", stats["chunks"])
     logger.info("  总耗时: %.1fs (%.2f min)", total_elapsed, total_elapsed / 60)

@@ -182,7 +182,7 @@ class MultiHopRetriever:
             messages = _build_gap_analysis_prompt(query, summary)
 
             try:
-                response = self._llm.chat(messages, temperature=0.3, max_tokens=300)
+                response = self._llm.chat(messages, temperature=0.3, max_tokens=1024)
             except Exception as e:
                 logger.warning("缺口分析 LLM 调用失败: %s", e)
                 break

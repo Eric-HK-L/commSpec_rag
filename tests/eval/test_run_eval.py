@@ -85,7 +85,7 @@ class TestFormatReport:
             ndcg_at_10=0.78,
         )
         output = format_report(report, 1500.0)
-        assert "3GPP RAG 检索评测报告" in output
+        assert "CommSpec RAG 检索评测报告" in output
         assert "**样本数**: 10" in output
         assert "0.85" in output
         assert "0.90" in output

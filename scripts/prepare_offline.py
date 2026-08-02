@@ -392,7 +392,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="制备 3GPP RAG 离线依赖包 (公司内网部署用)",
+        description="制备 CommSpec RAG 离线依赖包 (公司内网部署用)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:

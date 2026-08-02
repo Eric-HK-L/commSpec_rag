@@ -153,6 +153,7 @@ class MilvusStore(VectorStore):
             return
 
         # 定义字段 (Dense-only, BM25 待后续启用)
+        # section_path/parent_title 用 4096: marked 数据集 O-RAN 嵌套深 + 中文 UTF-8 字节数 > 字符数
         fields = [
             FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
             FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=VARCHAR_MAX),
@@ -166,11 +167,11 @@ class MilvusStore(VectorStore):
             FieldSchema(name="spec_number", dtype=DataType.VARCHAR, max_length=64),
             FieldSchema(name="release", dtype=DataType.VARCHAR, max_length=32),
             FieldSchema(name="parent_section_id", dtype=DataType.VARCHAR, max_length=256),
-            FieldSchema(name="parent_title", dtype=DataType.VARCHAR, max_length=1024),
+            FieldSchema(name="parent_title", dtype=DataType.VARCHAR, max_length=4096),
             FieldSchema(name="chunk_index", dtype=DataType.INT64),
             FieldSchema(name="section_number", dtype=DataType.VARCHAR, max_length=64),
             FieldSchema(name="section_title", dtype=DataType.VARCHAR, max_length=512),
-            FieldSchema(name="section_path", dtype=DataType.VARCHAR, max_length=1024),
+            FieldSchema(name="section_path", dtype=DataType.VARCHAR, max_length=4096),
             FieldSchema(name="doc_type", dtype=DataType.VARCHAR, max_length=32),
             FieldSchema(name="content_type", dtype=DataType.VARCHAR, max_length=32),
             FieldSchema(name="spec_role", dtype=DataType.VARCHAR, max_length=32),
@@ -264,11 +265,11 @@ class MilvusStore(VectorStore):
             data[4].append(c.spec_number[:64] if c.spec_number else "")
             data[5].append(c.release[:32] if c.release else "")
             data[6].append(c.parent_section_id[:256] if c.parent_section_id else "")
-            data[7].append(c.parent_title[:1024] if c.parent_title else "")
+            data[7].append(_safe_truncate_bytes(c.parent_title, 4096) if c.parent_title else "")
             data[8].append(c.chunk_index)
             data[9].append(c.section_number[:64] if c.section_number else "")
             data[10].append(c.section_title[:512] if c.section_title else "")
-            data[11].append(c.section_path[:1024] if c.section_path else "")
+            data[11].append(_safe_truncate_bytes(c.section_path, 4096) if c.section_path else "")
             data[12].append(c.doc_type[:32] if c.doc_type else "3gpp")
             data[13].append(c.content_type[:32] if c.content_type else "")
             data[14].append(c.spec_role[:32] if c.spec_role else "")

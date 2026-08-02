@@ -1,4 +1,4 @@
-"""RAG 提示词模板 — 面向 3GPP 规范检索增强生成."""
+"""RAG 提示词模板 — 面向 3GPP / O-RAN 规范检索增强生成."""
 
 from __future__ import annotations
 
@@ -175,6 +175,7 @@ def build_rag_prompt(
     extra_system_note: str = "",
     online_context: str = "",
     history: list[dict[str, str]] | None = None,
+    answer_lang: str = "",
 ) -> list[dict[str, str]]:
     """构建 RAG 问答提示词.
 
@@ -185,6 +186,9 @@ def build_rag_prompt(
         extra_system_note: 可选的额外系统提示 (如 Release 版本说明).
         online_context: 可选的在线搜索补充上下文 (如 Google/TSpec-LLM).
         history: 可选的多轮对话历史 [{"role": "user/assistant", "content": "..."}].
+        answer_lang: 期望的回答语言 ('zh'/'ko'/'en'/''=不指定).
+            非空时在 user 消息末尾加强输出语言指令 — user 指令比 system 更有效,
+            避免 LLM 因英文上下文输出英文再触发回译 (省一次完整生成).
     """
     # 分类列举问题需要更多上下文覆盖
     _is_taxonomy = _is_taxonomy_query(query)
@@ -222,7 +226,7 @@ def build_rag_prompt(
     if online_context:
         full_context = online_context + "\n\n---\n\n## 离线检索结果 (本地规范库)\n\n" + context_text
 
-    system_prompt = """你是一个 3GPP 规范专家助手。回答基于提供的 3GPP 规范文档片段。
+    system_prompt = """你是一个通信规范专家助手（3GPP / O-RAN）。回答基于提供的规范文档片段。
 
 回答规则：
 1. 严格基于提供的文档片段，不要编造规范内容
@@ -230,12 +234,13 @@ def build_rag_prompt(
 3. 文档可信度优先级：Physical layer spec 优先（38.211 > 38.212 > 38.213 > 38.214）
    详细说明 > 概述；官方定义 > 一般描述；指定 release 的规范 > 泛用版本
 4. 即使检索片段不完整，也应先基于已有片段整理出可确认的信息，再说明缺失项，不要直接放弃回答
-5. 使用中文回答，但保留规范术语的英文原文（如 PDU Session, N2 Interface）
-6. 回答结构清晰：先给直接答案，再列规范依据
+5. 【语言要求】必须使用与用户问题相同的语言回答（中文问题用简体中文，英文问题用英文），
+   规范术语保留英文原文（如 PDU Session, N2 Interface）；严禁用其他语言输出
+6. 回答结构清晰：先给出答案（不要写“直接答案”等字样的标题），再列规范依据
 7. 当回答中包含表格时，必须使用 Markdown 管道表格格式（|列1|列2|），禁止使用 Grid Table（+---+）格式
 8. 回答末尾附 References 表：每行包含 [编号] Section / Section Hierarchy / Cited Content（原文摘录）/ Relevance
 9. 首次引用规范中的技术变量/符号时，必须用中文解释其含义，后续可使用缩写
-   示例：\(\Delta f_{RA}\)（随机接入子载波间隔）、\(L_{RA}\)（前导码序列长度）、\(T_{CP}\)（循环前缀时长）
+   示例：\\(\\Delta f_{RA}\\)（随机接入子载波间隔）、\\(\\L_{RA}\\)（前导码序列长度）、\\(\\T_{CP}\\)（循环前缀时长）
 16. 片段来源标注了角色标签：🔴权威定义 > 🟡补充参考 > ⚪概述
     优先采纳「🔴权威定义」和「📊参数表」类型的片段作为回答的核心依据"""
 
@@ -255,6 +260,15 @@ def build_rag_prompt(
 
 请基于以上规范片段回答问题。"""
 
+    # 输出语言强指令 — 放 user 消息末尾, 比 system 规则更有效 (DeepSeek 对英文上下文
+    # 默认输出英文, 之前导致每次中文提问都触发回译兜底, 多花 ~30s 完整生成)
+    _LANG_INSTRUCTION = {
+        "zh": "\n\n【输出语言】必须使用简体中文回答，专业术语保留英文原文（如 PDU Session, N2 Interface）。",
+        "ko": "\n\n【출력 언어】반드시 한국어로 답변하세요. 전문 용어는 영문 원문을 유지합니다.",
+    }
+    if answer_lang and answer_lang in _LANG_INSTRUCTION:
+        user_prompt += _LANG_INSTRUCTION[answer_lang]
+
     # 多轮对话：将历史插入最终消息，帮助 LLM 理解追问意图
     if history and len(history) >= 2:
         history_text = "## 对话历史\n\n" + "\n".join(
@@ -271,7 +285,7 @@ def build_rag_prompt(
 
 def build_query_expansion_prompt(query: str, history: list[dict[str, str]] | None = None) -> list[dict[str, str]]:
     """构建查询扩展提示词 — 支持多轮对话上下文."""
-    system_prompt = """你是一个 3GPP 规范查询优化器。将用户的自然语言问题转化为更适合检索的关键词组合。
+    system_prompt = """你是一个通信规范查询优化器。将用户的自然语言问题转化为更适合检索的关键词组合。
 
 规则：
 1. 提取核心协议术语和规范编号

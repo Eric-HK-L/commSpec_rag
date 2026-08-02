@@ -33,7 +33,7 @@ export default function SystemPage() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">🖥 系统健康</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">系统健康</h1>
         <button onClick={fetch} className="px-3 py-1.5 text-xs bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700">
           刷新
         </button>
@@ -46,8 +46,8 @@ export default function SystemPage() {
         <>
           {/* 核心状态 */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <HealthBadge label="Milvus 连接" ok={info.milvus_connected} okText="✅ 已连接" failText="❌ 断开" />
-            <HealthBadge label="服务运行" ok={info.uptime_seconds > 0} okText={`🟢 ${fmtUptime(info.uptime_seconds)}`} failText="—" />
+            <HealthBadge label="Milvus 连接" ok={info.milvus_connected} okText="已连接" failText="断开" />
+            <HealthBadge label="服务运行" ok={info.uptime_seconds > 0} okText={fmtUptime(info.uptime_seconds)} failText="—" />
             <MetricBadge label="Python" value={info.python_version} />
             <MetricBadge label="平台" value={info.platform.includes("Darwin") ? "macOS" : info.platform.split("-")[0]} />
           </div>

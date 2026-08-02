@@ -153,6 +153,21 @@ class Settings(BaseSettings):
         return p
 
     @property
+    def documents_marked_dir(self) -> Path:
+        """Markdown 协议数据集目录 (marked/) — 默认嵌入数据源."""
+        return self.documents_abs_dir / "marked"
+
+    @property
+    def documents_original_dir(self) -> Path:
+        """原始 DOCX 文档目录 (original/) — pandoc 处理数据源."""
+        return self.documents_abs_dir / "original"
+
+    @property
+    def documents_other_dir(self) -> Path:
+        """其他文档目录 (other/) — 非 3GPP/O-RAN 文档."""
+        return self.documents_abs_dir / "other"
+
+    @property
     def log_abs_file(self) -> Path:
         """日志文件绝对路径."""
         p = Path(self.log_file)

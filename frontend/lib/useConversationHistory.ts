@@ -10,8 +10,24 @@ export interface ConversationEntry {
   timestamp: number;
 }
 
-const STORAGE_KEY = "3gpp_rag_history";
+const STORAGE_KEY = "commspec_rag_history";
+const LEGACY_STORAGE_KEY = "3gpp_rag_history"; // 旧命名，一次性迁移
 const MAX_ENTRIES = 50;
+
+// 将旧命名 key 下的历史数据迁移到新 key（仅执行一次）
+function migrateLegacyHistory() {
+  if (typeof window === "undefined") return;
+  try {
+    if (localStorage.getItem(STORAGE_KEY)) return;
+    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (legacy) {
+      localStorage.setItem(STORAGE_KEY, legacy);
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+    }
+  } catch {
+    /* ignore */
+  }
+}
 
 function loadHistory(): ConversationEntry[] {
   if (typeof window === "undefined") return [];
@@ -35,8 +51,9 @@ function saveHistory(entries: ConversationEntry[]) {
 export function useConversationHistory() {
   const [history, setHistory] = useState<ConversationEntry[]>([]);
 
-  // 初始化加载
+  // 初始化加载（含旧命名数据迁移）
   useEffect(() => {
+    migrateLegacyHistory();
     setHistory(loadHistory());
   }, []);
 

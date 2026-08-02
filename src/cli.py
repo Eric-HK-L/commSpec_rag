@@ -83,7 +83,7 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     if args.dry_run:
         logger.info("[DRY-RUN] 预览摄入计划 (release=%s, series=%s, spec=%s)",
                      args.release, args.series, args.spec)
-        logger.info("[DRY-RUN] 步骤: 下载 → Docling 转换 → 分块 → 嵌入 BGE/API → 入库 %s",
+        logger.info("[DRY-RUN] 步骤: 下载 → Pandoc 转换 → 分块 → 嵌入 BGE/API → 入库 %s",
                      store.__class__.__name__)
         return
 
@@ -153,7 +153,7 @@ def cmd_incremental(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="3GPP RAG 管理工具")
+    parser = argparse.ArgumentParser(description="CommSpec RAG 管理工具")
     sub = parser.add_subparsers(dest="command")
 
     p_import = sub.add_parser("import", help="[已废弃] 导入预计算数据 — 请用 bulk_ingest.py")

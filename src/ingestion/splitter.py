@@ -1,7 +1,7 @@
 """标题感知文档分块器 — Markdown / 纯文本通用，结构感知（表格/公式原子化保护）.
 
 支持两种策略:
-  1. header_split: 解析 #~#### 标题, 按最深层级切分 (适合 3GPP 规范)
+  1. header_split: 解析 #~#### 标题, 按最深层级切分 (适合规范文档)
   2. char_split: 固定字符窗口 + 重叠 (降级策略, 兼容 Phase 1)
 
 pandoc 结构感知:
@@ -20,9 +20,9 @@ from src.retriever.vector_store import Chunk
 
 logger = logging.getLogger(__name__)
 
-# Markdown 标题正则 — 匹配 1-8 级 (pandoc 3GPP Annex 用 ######## 级别)
+# Markdown 标题正则 — 匹配 1-8 级 (pandoc Annex 用 ######## 级别)
 HEADER_RE = re.compile(r"^(#{1,8})\s+(.+)$", re.MULTILINE)
-# 3GPP 规范章节编号 (如 "6.1.2  PDU Session Establishment")
+# 规范章节编号 (如 "6.1.2  PDU Session Establishment")
 SECTION_NUM_RE = re.compile(r"^(\d+(?:\.\d+)*)\s+(.{3,})$", re.MULTILINE)
 # 纯文本 TOC 章节行 (如 "1 Scope   7") — mammoth 输出降级
 PLAIN_SECTION_RE = re.compile(r"^(\d+(?:\.\d+)*)\s+([A-Z]\w.{2,}?)\s+\d+\s*$", re.MULTILINE)
@@ -660,7 +660,7 @@ class HeaderAwareSplitter:
         3. 其他                        → 换行边界拆分 (兜底)
         """
         lines = text.split("\n")
-        # 检测窗口: 3GPP 规范中表格前常有章节标题 + 一段说明,
+        # 检测窗口: 规范文档中表格前常有章节标题 + 一段说明,
         # 50 行覆盖了最极端的情况 (实测最长 prose 前缀 ~40 行)
         head = lines[: min(50, len(lines))]
         plus_count = sum(1 for l in head if l.strip().startswith("+"))
@@ -713,7 +713,7 @@ class HeaderAwareSplitter:
         header_bytes = sum(len(l.encode("utf-8")) + 1 for l in header_lines)
 
         # ── 5. 收集数据行组 (所有 + 线为边界, 中间内容自动归组) ──
-        # 3GPP 表格的 Pandoc 输出极其异构:
+        # 规范文档表格的 Pandoc 输出极其异构:
         #   - 标准表:    +---+  content  +---+  +---+  content  +---+
         #   - 合并单元格: +---+  content  +---+  content  +---+
         #                 (一个 +---+ 既是关闭也是开启, 无连续双边框)

@@ -9,8 +9,8 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "3GPP RAG — 通信规范智能问答",
-  description: "面向 3GPP 通信标准文档的检索增强生成系统",
+  title: "CommSpec RAG — 通信规范智能问答",
+  description: "面向 3GPP / O-RAN 通信标准文档的检索增强生成系统",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -29,7 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </svg>
               </span>
               <span className="font-extrabold text-lg text-gray-800 dark:text-gray-200 tracking-tight">
-                3GPP
+                CommSpec
               </span>
               <span className="text-xs font-bold px-1.5 py-0.5 rounded
                                bg-blue-100 dark:bg-blue-900/50

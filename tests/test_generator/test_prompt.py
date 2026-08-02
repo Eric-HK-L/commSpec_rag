@@ -24,7 +24,7 @@ class TestBuildRagPrompt:
         assert len(msgs) == 2
         assert msgs[0]["role"] == "system"
         assert msgs[1]["role"] == "user"
-        assert "3GPP 规范专家助手" in msgs[0]["content"]
+        assert "通信规范专家助手（3GPP / O-RAN）" in msgs[0]["content"]
         assert "What is PDU Session?" in msgs[1]["content"]
         assert "PDU Session is defined" in msgs[1]["content"]
 

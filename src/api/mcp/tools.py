@@ -1,4 +1,4 @@
-"""MCP Tool 定义与处理器 — 4 个 3GPP RAG 工具."""
+"""MCP Tool 定义与处理器 — 4 个 CommSpec RAG 工具."""
 
 from __future__ import annotations
 

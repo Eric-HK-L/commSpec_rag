@@ -2,7 +2,7 @@
 
 与开源项目对标:
   - gpp-RAG-app: 也用 pandoc，但他们的 clean_content() 删除所有表格（糟粕）→ 我们保留
-  - SpecPilot: Docling 太重（PyTorch 依赖）→ pandoc 零 Python 依赖
+  - SpecPilot: 早期评估过 Docling（PyTorch 依赖重）→ 最终选用 pandoc 零 Python 依赖
   - Chat3GPP: python-docx 手动解析（无公式支持）→ pandoc 原生 OLE→LaTeX
 
 pandoc 优势:
@@ -34,7 +34,7 @@ class ExtractionResult:
     errors: list[str] = field(default_factory=list)  # 转换过程中的警告/错误
 
 
-class DoclingExtractor:
+class PandocExtractor:
     """使用 pandoc 将 3GPP/O-RAN DOCX 规范转换为 Markdown.
 
     pandoc 相比 mammoth 的核心优势:
@@ -231,7 +231,7 @@ class DoclingExtractor:
             (spec_number, release, version) — release 从 v 版本号推断
         """
         stem = Path(filename).stem
-        m = DoclingExtractor.ORAN_PATTERN.match(stem)
+        m = PandocExtractor.ORAN_PATTERN.match(stem)
         if not m:
             return "", "", ""
         wg_num = m.group(1)
@@ -259,7 +259,7 @@ class DoclingExtractor:
         spec, release, version = "", "", ""
 
         # 主匹配: TS/TR 编号 + V版本
-        m = DoclingExtractor.HEADER_TS_RE.search(head)
+        m = PandocExtractor.HEADER_TS_RE.search(head)
         if m:
             spec = m.group(1)
             version = m.group(2)  # 如 "18.4.0"
@@ -270,7 +270,7 @@ class DoclingExtractor:
 
         # 备用 Release 检测: (Release 18) 后缀
         if not release:
-            rm = DoclingExtractor.RELEASE_LINE_RE.search(head)
+            rm = PandocExtractor.RELEASE_LINE_RE.search(head)
             if rm:
                 release = f"R{rm.group(1)}"
 
@@ -343,10 +343,10 @@ class DoclingExtractor:
         md_text = re.sub(r'\{[#\.][^}]+\}', '', md_text)
 
         # 3. 图片处理 — 两种 pandoc Figure 格式
-        md_text = DoclingExtractor.FIGURE_BEFORE_IMAGE_RE.sub(r'[\1]', md_text)
-        md_text = DoclingExtractor.FIGURE_AFTER_IMAGE_RE.sub(r'[\1]', md_text)
-        md_text = DoclingExtractor.MULTI_IMAGE_RE.sub('', md_text)
-        md_text = DoclingExtractor.BARE_IMAGE_RE.sub('', md_text)
+        md_text = PandocExtractor.FIGURE_BEFORE_IMAGE_RE.sub(r'[\1]', md_text)
+        md_text = PandocExtractor.FIGURE_AFTER_IMAGE_RE.sub(r'[\1]', md_text)
+        md_text = PandocExtractor.MULTI_IMAGE_RE.sub('', md_text)
+        md_text = PandocExtractor.BARE_IMAGE_RE.sub('', md_text)
 
         # 4. 清理残留的空图片引用
         md_text = re.sub(r'!\[\]\([^)]*\)\s*', '', md_text)
@@ -372,5 +372,202 @@ class DoclingExtractor:
 
         # 7. 移除行尾空格
         md_text = re.sub(r' +\n', '\n', md_text)
+
+        return md_text.strip()
+
+
+class MarkdownSourceExtractor:
+    """Markdown 协议数据集读取器 — 直接读取数据集 raw.md (跳过 pandoc).
+
+    数据来源: HuggingFace 3GPP/O-RAN Markdown 协议数据集 (转换质量优于 pandoc).
+    数据集目录结构 (遵循数据集原结构, 上传时保持一致):
+
+      marked/R18/38_series/38865/raw.md                          → spec=38.865, release=R18
+      marked/R18/36_series/36108/raw.md                          → spec=36.108, release=R18
+      marked/ORAN/O-RAN.WG4.TS.CUS.0-R005-v20.00/raw.md          → spec=O-RAN.WG4.TS.CUS.0, release=v20.00
+
+    元数据解析: 优先从目录路径 (spec 目录名 + series 目录 + release 目录),
+    其次从内容头 (3GPP TS/TR 编号 / O-RAN ALLIANCE 标识) 兜底.
+    """
+
+    # 规范目录名: 纯 5 位数字 (如 38865) → spec 38.865; 含子规范号 (如 38101-2) → spec 38.101
+    SPEC_DIR_RE = re.compile(r"^(\d{5})(?:-\d+)?$")
+    # series 目录: 38_series → 38
+    SERIES_DIR_RE = re.compile(r"^(\d{2})_series$")
+    # Release 目录: R18 → 18
+    RELEASE_DIR_RE = re.compile(r"^R(\d+)$", re.IGNORECASE)
+
+    # 内容头 3GPP 编号 (复用 PandocExtractor 的主格式, 但无日期括号也接受)
+    HEADER_SPEC_RE = re.compile(r"(?:3GPP\s+)?(?:TS|TR)\s+(\d{2}\.\d{3})\s+V(\d+\.\d+\.\d+)", re.IGNORECASE)
+    HEADER_RELEASE_RE = re.compile(r"\(Release\s+(\d+)\)", re.IGNORECASE)
+    HEADER_ORAN_RE = re.compile(r"O-RAN\s+ALLIANCE|O-RAN\s+Working\s+Group", re.IGNORECASE)
+
+    def __init__(self):
+        pass
+
+    def extract_file(self, filepath: str | Path) -> ExtractionResult:
+        """读取单个 raw.md 数据集文件.
+
+        Args:
+            filepath: markdown 文件路径.
+
+        Returns:
+            ExtractionResult 含 markdown 文本和元数据 (spec_number/release/version/title).
+        """
+        filepath = Path(filepath)
+        logger.info("读取 Markdown 数据集: %s", filepath)
+
+        try:
+            text = filepath.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:
+            logger.error("读取失败 %s: %s", filepath.name, e)
+            return ExtractionResult(
+                source_file=str(filepath),
+                spec_number="", release="", version="", title="",
+                markdown="",
+                errors=[f"读取失败: {e}"],
+            )
+
+        # 路径解析 (目录名优先)
+        spec_number, release, version, doc_type = self._parse_path(filepath)
+
+        # 内容头兜底 (spec/release/version)
+        head = text[:800]
+        m = self.HEADER_SPEC_RE.search(head)
+        if m:
+            if not spec_number:
+                spec_number = m.group(1)
+            if not version:
+                version = m.group(2)
+            if not release and version:
+                major = version.split(".")[0]
+                if major.isdigit():
+                    release = f"R{major}"
+        if not release:
+            rm = self.HEADER_RELEASE_RE.search(head)
+            if rm:
+                release = f"R{rm.group(1)}"
+        if not doc_type and self.HEADER_ORAN_RE.search(head):
+            doc_type = "oran"
+
+        title = self._extract_title(text)
+        clean = self._clean_markdown(text)
+
+        return ExtractionResult(
+            source_file=str(filepath),
+            spec_number=spec_number,
+            release=release,
+            version=version,
+            title=title,
+            markdown=clean,
+        )
+
+    def extract_directory(self, dirpath: str | Path, pattern: str = "*.md") -> list[ExtractionResult]:
+        """批量读取目录下所有 markdown 数据集文件."""
+        dirpath = Path(dirpath)
+        files = sorted(dirpath.rglob(pattern))
+        logger.info("批量读取 %d 个 markdown 文件 (目录: %s)", len(files), dirpath)
+
+        results: list[ExtractionResult] = []
+        for fp in files:
+            result = self.extract_file(fp)
+            results.append(result)
+
+        success = sum(1 for r in results if r.markdown)
+        logger.info("批量读取完成: %d/%d 成功", success, len(results))
+        return results
+
+    # ── 路径元数据解析 ──
+
+    @staticmethod
+    def _parse_path(filepath: Path) -> tuple[str, str, str, str]:
+        """从数据集目录路径解析元数据.
+
+        Returns:
+            (spec_number, release, version, doc_type) — 无法解析的字段为空字符串.
+        """
+        spec_number, release, version, doc_type = "", "", "", ""
+        parts = filepath.parts
+        # 找标记目录名: 5 位数字规范目录 或 O-RAN.* 目录
+        for i, part in enumerate(parts):
+            m = MarkdownSourceExtractor.SPEC_DIR_RE.match(part)
+            if m and not spec_number:
+                digits = m.group(1)
+                spec_number = f"{digits[:2]}.{digits[2:]}"
+                doc_type = "3gpp"
+                continue
+            if part.upper().startswith("O-RAN.") and not spec_number:
+                # 注意: 不能走 parse_oran_filename — 其内部 Path().stem 会把 "v20.00" 的
+                # ".00" 当扩展名剥离, 导致匹配失败。这里直接用 pattern 匹配目录名。
+                m = PandocExtractor.ORAN_PATTERN.match(part)
+                if m:
+                    spec_number = f"O-RAN.WG{m.group(1)}.{m.group(2)}"
+                    version = m.group(4)
+                    release = version  # O-RAN 以版本号作为 release 标识
+                    doc_type = "oran"
+                continue
+            # Release 目录 (R18) — 3GPP 才使用
+            rm = MarkdownSourceExtractor.RELEASE_DIR_RE.match(part)
+            if rm and not release:
+                release = f"R{rm.group(1)}"
+                continue
+            sm = MarkdownSourceExtractor.SERIES_DIR_RE.match(part)
+            if sm and not spec_number:
+                # 36_series 目录出现但无规范目录 → 无法推断具体 spec
+                continue
+        return spec_number, release, version, doc_type
+
+    @staticmethod
+    def _extract_title(md_text: str) -> str:
+        """提取数据集文档标题 — 优先规范头行, 其次首个标题."""
+        lines = md_text.split("\n")
+        # 1. "3GPP TS/TR 38.xxx V18.0.0 ..." 行
+        for line in lines[:30]:
+            s = line.strip().lstrip("#").strip()
+            if re.search(r"3GPP\s+(TS|TR)\s+\d{2}\.\d{3}\s+V\d+", s, re.IGNORECASE):
+                return s
+        # 2. O-RAN 标题行
+        for line in lines[:30]:
+            s = line.strip().lstrip("#").strip()
+            if s.startswith("O-RAN Working Group") or s.startswith("O-RAN ALLIANCE"):
+                return s
+        # 3. 首个非 Contents 标题
+        for line in lines[:60]:
+            s = line.strip()
+            if s.startswith("#") and len(s) > 3 and "contents" not in s.lower() and "logo" not in s.lower():
+                return s.lstrip("#").strip()
+        return ""
+
+    # ── Markdown 清理 ──
+
+    @staticmethod
+    def _clean_markdown(md_text: str) -> str:
+        """数据集 markdown 清理 — 移除图片引用与噪声.
+
+        数据集特点:
+          - 3GPP raw.md: ![5G Advanced logo](xxx_img.jpg) 图片引用 (文件多数缺失)
+          - O-RAN raw.md: <img src="retrieval/oran/..." /> HTML 图片标签
+          - TOC 导航链接 [text](#anchor) — 对 RAG 无意义
+        """
+        # 1. HTML img 标签 (O-RAN 数据集)
+        md_text = re.sub(r"<img\s+[^>]*/?>", "", md_text, flags=re.IGNORECASE)
+
+        # 2. Markdown 图片引用 ![alt](path) → 保留 alt 文字 (图片标题即图注信息)
+        #    ![5G Advanced logo](xxx_img.jpg) → [图: 5G Advanced logo]
+        #    空 alt 的 ![](path) 直接删除
+        def _keep_alt(m: re.Match) -> str:
+            alt = m.group(1).strip()
+            return f"[图: {alt}]" if alt else ""
+
+        md_text = re.sub(r"!\[([^\]]*)\]\([^)]*\)\s*", _keep_alt, md_text)
+
+        # 3. 锚点导航链接 [text](#anchor) → 保留文字
+        md_text = re.sub(r"\[([^\]]+?)\]\(#[^)]+\)", r"\1", md_text)
+
+        # 4. 压缩连续空行 (最多 2 个)
+        md_text = re.sub(r"\n{4,}", "\n\n\n", md_text)
+
+        # 5. 移除行尾空格
+        md_text = re.sub(r" +\n", "\n", md_text)
 
         return md_text.strip()

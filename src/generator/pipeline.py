@@ -40,6 +40,40 @@ from src.utils.monitoring import (
 logger = logging.getLogger(__name__)
 
 
+# 合并翻译+扩展的 system prompt — 一次 LLM 调用替代两次串行调用 (省 ~2-4s)
+_TRANSLATE_EXPAND_SYSTEM = """你是通信规范查询优化器（3GPP / O-RAN）。将用户查询翻译为技术英文，并扩展为更适合检索的关键词组合。
+规则：
+1. 保留规范编号（TS xx.xxx / TR xx.xxx）与技术缩写（NR, AMF, SMF, SLPP 等）
+2. 使用精确的通信标准术语
+3. 添加同义词和相关协议名
+4. 严格输出两行（不要任何解释或空行）：
+TRANSLATED: <英文翻译>
+EXPANDED: <扩展后的英文检索查询>"""
+
+
+# ── 语言兜底与流式切片工具 ──
+
+
+def _ensure_answer_language(answer: str, target_lang: str, llm: LLMClient) -> str:
+    """确保回答语言符合用户语言 — 仅当 LLM 输出语言不符时触发回译.
+
+    优化: 主路径 (prompt 已要求用用户语言回答) 零额外 LLM 调用;
+    回译仅在异常路径 (LLM 仍输出英文) 兜底, 不损失回答质量.
+    """
+    if target_lang == "en":
+        return answer
+    zh_ratio = sum(1 for ch in answer if "\u4e00" <= ch <= "\u9fff") / max(len(answer), 1)
+    if zh_ratio >= 0.05:
+        return answer
+    logger.info("回答语言不符 (中文占比 %.1f%%), 触发回译兜底 EN→%s", zh_ratio * 100, target_lang)
+    return translate_from_english(answer, target_lang, llm)
+
+
+def _split_for_stream(text: str, size: int = 32) -> list[str]:
+    """将完整回答切成小段供流式推送 (缓存命中时使用)."""
+    return [text[i:i + size] for i in range(0, len(text), size)]
+
+
 @dataclass
 class RAGResponse:
     """RAG 查询的完整响应."""
@@ -123,19 +157,113 @@ class RAGPipeline:
 
         t_start = time.time()
 
+        # Step 0-3.9: 检索阶段 (翻译/扩展/混合检索/精排/多跳/交叉引用/上下文)
+        ctx = self._retrieve_context(
+            query, reranker_enabled=reranker_enabled,
+            history=history, release=release, series=series, doc_type=doc_type,
+        )
+        query_lang = ctx["query_lang"]
+        search_query = ctx["search_query"]
+        expanded_query = ctx["expanded_query"]
+        results = ctx["results"]
+        release_note = ctx["release_note"]
+        online_context = ctx["online_context"]
+
+        if not results:
+            record_ask(time.time() - t_start, success=True)
+            return RAGResponse(
+                query=query,
+                answer="未在规范库中找到相关内容。",
+                sources=[],
+                verified=True,
+                warnings=[],
+            )
+
+        # Step 3.9: 相邻 chunk 上下文扩展 — 分类列举问题扩大范围
+        if _is_taxonomy_query(search_query):
+            self._expand_adjacent_chunks(results, top_n=10, window=3)
+        else:
+            self._expand_adjacent_chunks(results)
+
+        # Step 4: 构建 RAG 提示词 (使用英文检索查询, 保证与检索上下文语言一致)
+        # answer_lang: user 消息末尾语言强指令, 避免 DeepSeek 因英文上下文输出英文再回译
+        messages = build_rag_prompt(
+            search_query, results,
+            extra_system_note=release_note,
+            online_context=online_context,
+            history=history,
+            answer_lang=query_lang,
+        )
+
+        # Step 5: LLM 生成
+        t_llm = time.time()
+        answer = self._llm.chat(messages)
+        llm_dt = time.time() - t_llm
+        # 估算 token 消耗 (粗略: 4 char ≈ 1 token)
+        prompt_chars = sum(len(m.get("content", "")) for m in messages)
+        record_llm_call(
+            prompt_tokens=prompt_chars // 4,
+            completion_tokens=len(answer) // 4,
+            duration_s=llm_dt,
+        )
+
+        # Step 5.5: 多语言兜底 — 仅当 LLM 输出语言与用户不符时回译 (正常路径零额外调用)
+        if not answer or not answer.strip():
+            answer = "抱歉，模型未能生成回答，请重试或换个问法。"
+        if query_lang != "en":
+            answer = _ensure_answer_language(answer, query_lang, self._llm)
+
+        # Step 6: 答案验证
+        verification = self._verifier.verify(answer, results)
+
+        record_ask(time.time() - t_start)
+
+        response = RAGResponse(
+            query=query,
+            answer=verification["answer"],
+            sources=results,
+            verified=verification["verified"],
+            warnings=verification["warnings"],
+            coverage=verification["coverage"],
+            expanded_query=expanded_query,
+        )
+
+        # 存入查询缓存
+        self._query_cache[cache_key] = response
+        return response
+
+    def _retrieve_context(
+        self,
+        query: str,
+        reranker_enabled: bool = True,
+        history: list[dict[str, str]] | None = None,
+        release: str | None = None,
+        series: str | None = None,
+        doc_type: str | None = None,
+    ) -> dict:
+        """检索阶段 (Step 0-3.9) — 翻译/扩展/混合检索/精排/多跳/交叉引用/上下文扩展.
+
+        供 ask() 与 ask_stream() 共用, 避免双份逻辑漂移.
+
+        Returns:
+            dict: query_lang, search_query, expanded_query, results,
+                  release_note, online_context
+        """
         # Step 0: 多语言处理 — 检测语言, 非英文查询翻译为英文再检索
         query_lang = detect_language(query)
-        search_query = translate_to_english(query, query_lang, self._llm)
-
         # Step 1: 查询扩展 (含多轮对话上下文)
-        expanded_query = self._expand_query(search_query, history)
+        # 优化: 非英文查询时合并 翻译+扩展 为一次 LLM 调用 (原串行两次, 省 ~2-4s)
+        if query_lang == "en":
+            search_query = query
+            expanded_query = self._expand_query(query, history)
+        else:
+            search_query, expanded_query = self._translate_and_expand(query, query_lang, history)
 
         # Step 2: 生成查询嵌入
         query_embedding = self._get_query_embedding(expanded_query)
 
         # Step 3: 混合检索
         t_search = time.time()
-        # 构建 Milvus 标量过滤表达式
         filter_expr = self._build_filter_expr(release=release, series=series, doc_type=doc_type)
         # 若启用 reranker, 先用大池子检索再精排
         search_top_k = settings.reranker_top_k if reranker_enabled else settings.max_search_results
@@ -144,30 +272,34 @@ class RAGPipeline:
         results = self._retriever.search(expanded_query, query_embedding, filter_expr=filter_expr)
         self._retriever._final_top_k = old_final
 
-        # Step 3.1: 分类列举查询 → 多角度分解检索（子查询并行搜索 + 合并去重）
+        # Step 3.1: 分类列举查询 → 多角度分解检索
         if _is_taxonomy_query(search_query):
-            results = self._taxonomy_decompose_search(search_query, query_embedding, results, filter_expr=filter_expr)
+            results = self._taxonomy_decompose_search(
+                search_query, query_embedding, results, filter_expr=filter_expr,
+            )
 
         # Spec-aware + Cross-Encoder Reranker 精排
         results = self._post_process_results(
             query=query, expanded_query=expanded_query,
-            query_embedding=query_embedding, results=results, top_k=settings.max_search_results,
-            reranker_enabled=reranker_enabled,
+            query_embedding=query_embedding, results=results,
+            top_k=settings.max_search_results, reranker_enabled=reranker_enabled,
         )
 
-        # Step 3.1b: 分类列举查询 → 元数据 boost（authoritative/parameter_table 加权）
+        # Step 3.1b: 分类列举查询 → 元数据 boost
         if _is_taxonomy_query(search_query):
             results = self._apply_metadata_boost(results)
 
-        # 过滤低信息密度章节 (缩写表/参考文献等) — 避免污染 LLM 上下文
+        # 过滤低信息密度章节 (缩写表/参考文献等)
         results = _filter_low_quality(results, settings.max_search_results)
         search_dt = time.time() - t_search
 
         # Step 3.2: 多跳检索
         if needs_multi_hop(results):
             record_multi_hop()
-            logger.info("触发多跳检索 (多样性=%.2f)",
-                         len({r.spec_number for r in results if r.spec_number}) / len(results))
+            logger.info(
+                "触发多跳检索 (多样性=%.2f)",
+                len({r.spec_number for r in results if r.spec_number}) / len(results),
+            )
             try:
                 results = self._multi_hop.search(search_query, query_embedding)
             except Exception as e:
@@ -223,64 +355,142 @@ class RAGPipeline:
                 )
                 online_context = self._online.format_as_context(online_results)
 
+        return {
+            "query_lang": query_lang,
+            "search_query": search_query,
+            "expanded_query": expanded_query,
+            "results": results,
+            "release_note": release_note,
+            "online_context": online_context,
+        }
+
+    def ask_stream(
+        self,
+        query: str,
+        reranker_enabled: bool = True,
+        history: list[dict[str, str]] | None = None,
+        release: str | None = None,
+        series: str | None = None,
+        doc_type: str | None = None,
+    ):
+        """流式问答 — 生成器产出事件元组.
+
+        与 ask() 检索阶段完全一致, 仅 LLM 生成改为逐段流式.
+
+        Events:
+            ("sources", list[RetrievalResult]) — 检索结果, 只推送一次
+            ("chunk", str)                     — 回答片段, 多次
+            ("done", dict)                     — 收尾: answer/verified/warnings/coverage/expanded_query
+        """
+        cache_key = hashlib.md5(query.lower().strip().encode()).hexdigest()
+        cached = self._query_cache.get(cache_key)
+        if cached is not None:
+            logger.info("查询缓存命中(流式): %s", query[:80])
+            yield ("sources", cached.sources)
+            for piece in _split_for_stream(cached.answer):
+                yield ("chunk", piece)
+            yield ("done", {
+                "answer": cached.answer,
+                "verified": cached.verified,
+                "warnings": cached.warnings,
+                "coverage": cached.coverage,
+                "expanded_query": cached.expanded_query,
+            })
+            return
+
+        t_start = time.time()
+        ctx = self._retrieve_context(
+            query, reranker_enabled=reranker_enabled,
+            history=history, release=release, series=series, doc_type=doc_type,
+        )
+        query_lang = ctx["query_lang"]
+        search_query = ctx["search_query"]
+        expanded_query = ctx["expanded_query"]
+        results = ctx["results"]
+        release_note = ctx["release_note"]
+        online_context = ctx["online_context"]
+
         if not results:
-            record_ask(time.time() - t_start, success=True)
-            return RAGResponse(
-                query=query,
-                answer="未在 3GPP 规范中找到相关内容。",
-                sources=[],
-                verified=True,
-                warnings=[],
-            )
+            yield ("sources", [])
+            yield ("done", {
+                "answer": "未在规范库中找到相关内容。",
+                "verified": True,
+                "warnings": [],
+                "coverage": 0.0,
+                "expanded_query": expanded_query,
+            })
+            return
 
-        # Step 3.9: 相邻 chunk 上下文扩展 — 分类列举问题扩大范围
-        if _is_taxonomy_query(search_query):
-            self._expand_adjacent_chunks(results, top_n=10, window=3)
-        else:
-            self._expand_adjacent_chunks(results)
-
-        # Step 4: 构建 RAG 提示词 (使用英文检索查询, 保证与检索上下文语言一致)
         messages = build_rag_prompt(
             search_query, results,
             extra_system_note=release_note,
             online_context=online_context,
             history=history,
+            answer_lang=query_lang,
         )
 
-        # Step 5: LLM 生成
+        # 先推送检索结果, 再流式生成回答
+        yield ("sources", results)
+
+        # Step 5: LLM 流式生成 — 边生成边推送
         t_llm = time.time()
-        answer = self._llm.chat(messages)
+        parts: list[str] = []
+        buffer = ""
+        try:
+            for delta in self._llm.chat_stream(messages):
+                parts.append(delta)
+                buffer += delta
+                # 按 32 字符粒度推送, 减少事件数量
+                while len(buffer) >= 32:
+                    yield ("chunk", buffer[:32])
+                    buffer = buffer[32:]
+        except Exception as e:
+            logger.error("流式生成失败: %s", e)
+            raise
+        if buffer:
+            yield ("chunk", buffer)
+        answer = "".join(parts)
+        # API 空流兜底: DeepSeek 偶发返回空 content, 非流式重试一次
+        if not answer.strip():
+            logger.warning("流式输出为空, 非流式重试一次")
+            try:
+                answer = self._llm.chat(messages)
+            except Exception as e:
+                logger.error("非流式重试失败: %s", e)
         llm_dt = time.time() - t_llm
-        # 估算 token 消耗 (粗略: 4 char ≈ 1 token)
-        prompt_chars = sum(len(m.get("content", "")) for m in messages)
         record_llm_call(
-            prompt_tokens=prompt_chars // 4,
+            prompt_tokens=sum(len(m.get("content", "")) for m in messages) // 4,
             completion_tokens=len(answer) // 4,
             duration_s=llm_dt,
         )
 
-        # Step 5.5: 多语言回译 — 英文答案 → 用户源语言
+        # Step 5.5: 多语言兜底 — 仅当 LLM 输出语言与用户不符时回译 (正常路径零额外调用)
+        if not answer or not answer.strip():
+            answer = "抱歉，模型未能生成回答，请重试或换个问法。"
         if query_lang != "en":
-            answer = translate_from_english(answer, query_lang, self._llm)
+            answer = _ensure_answer_language(answer, query_lang, self._llm)
 
         # Step 6: 答案验证
         verification = self._verifier.verify(answer, results)
-
         record_ask(time.time() - t_start)
 
         response = RAGResponse(
             query=query,
-            answer=verification["answer"],
+            answer=answer,
             sources=results,
             verified=verification["verified"],
             warnings=verification["warnings"],
             coverage=verification["coverage"],
             expanded_query=expanded_query,
         )
-
-        # 存入查询缓存
         self._query_cache[cache_key] = response
-        return response
+        yield ("done", {
+            "answer": answer,
+            "verified": verification["verified"],
+            "warnings": verification["warnings"],
+            "coverage": verification["coverage"],
+            "expanded_query": expanded_query,
+        })
 
     def search(self, query: str, top_k: int | None = None, reranker_enabled: bool = True,
                release: str | None = None, series: str | None = None, doc_type: str | None = None) -> list[RetrievalResult]:
@@ -332,6 +542,51 @@ class RAGPipeline:
         except Exception as e:
             logger.warning("查询扩展失败: %s", e)
         return query
+
+    def _translate_and_expand(
+        self,
+        query: str,
+        source_lang: str,
+        history: list[dict[str, str]] | None = None,
+    ) -> tuple[str, str]:
+        """合并执行 翻译(→EN) + 查询扩展 — 一次 LLM 调用替代两次串行调用.
+
+        Returns:
+            (search_query, expanded_query). 失败时回退到原串行路径, 不损失质量.
+        """
+        try:
+            user_content = f"用户查询: {query}"
+            if history and len(history) >= 2:
+                history_lines = ["## 对话历史 (用于理解当前问题的上下文)"]
+                for msg in history[-6:]:
+                    role = "用户" if msg["role"] == "user" else "助手"
+                    history_lines.append(f"{role}: {msg['content'][:200]}")
+                history_lines.append(f"\n## 当前问题 (需要翻译+扩展为英文检索查询)\n{query}")
+                user_content = "\n".join(history_lines)
+            result = self._llm.chat(
+                [
+                    {"role": "system", "content": _TRANSLATE_EXPAND_SYSTEM},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=0.0,
+                max_tokens=512,
+            )
+            translated = expanded = ""
+            for line in result.splitlines():
+                line = line.strip()
+                if line.startswith("TRANSLATED:"):
+                    translated = line[len("TRANSLATED:"):].strip()
+                elif line.startswith("EXPANDED:"):
+                    expanded = line[len("EXPANDED:"):].strip()
+            if len(translated) > 3 and len(expanded) > 3:
+                logger.info("翻译+扩展合并: %s → EN (%.60s)", source_lang, translated)
+                return translated, expanded
+            logger.warning("合并解析失败, 回退串行路径: %.80s", result[:80])
+        except Exception as e:
+            logger.warning("合并翻译+扩展失败, 回退串行路径: %s", e)
+        # 回退: 原串行路径 (翻译 → 扩展), 保证质量不降级
+        search_query = translate_to_english(query, source_lang, self._llm)
+        return search_query, self._expand_query(search_query, history)
 
     def _post_process_results(
         self,
@@ -502,12 +757,12 @@ class RAGPipeline:
             {
                 "role": "system",
                 "content": (
-                    "你是一个 3GPP 规范检索专家。将用户的分类列举问题分解为多个具体子查询，"
+                    "你是一个通信规范（3GPP / O-RAN）检索专家。将用户的分类列举问题分解为多个具体子查询，"
                     "每个子查询覆盖一个类别/维度。\n\n"
                     "规则：\n"
                     "1. 每个子查询应该是独立、可直接检索的关键词组合\n"
                     "2. 子查询应覆盖用户问题的所有类别，不遗漏\n"
-                    "3. 使用 3GPP 规范术语（如 PRACH preamble, RACH occasion）\n"
+                    "3. 使用规范术语（如 PRACH preamble, RACH occasion）\n"
                     "4. 输出每行一个子查询，不要编号，不要解释\n"
                     "5. 最多 5 个子查询"
                 ),
@@ -515,7 +770,7 @@ class RAGPipeline:
             {"role": "user", "content": f"将以下问题分解为覆盖所有维度的子查询：\n\n{query}"},
         ]
         try:
-            response = self._llm.chat(messages, temperature=0.3, max_tokens=300)
+            response = self._llm.chat(messages, temperature=0.3, max_tokens=1024)
             sub_queries = [
                 line.strip()
                 for line in response.strip().split("\n")

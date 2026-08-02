@@ -40,7 +40,7 @@ class SpecDownloader:
     """3GPP 规范批量下载器."""
 
     def __init__(self, output_dir: str | None = None, timeout: int = 60):
-        self._output = Path(output_dir) if output_dir else settings.documents_abs_dir
+        self._output = Path(output_dir) if output_dir else settings.documents_original_dir
         self._timeout = timeout
         self._session = requests.Session()
         self._session.headers.update({
@@ -248,7 +248,7 @@ def main():
     parser.add_argument("--release", default="R18", help="3GPP Release (默认: R18)")
     parser.add_argument("--series", type=int, help="Series 编号 (如 38)")
     parser.add_argument("--spec", help="单篇规范号 (如 38300)")
-    parser.add_argument("--output", default=str(settings.documents_abs_dir), help="输出目录")
+    parser.add_argument("--output", default=str(settings.documents_original_dir), help="输出目录 (默认: original/)")
     parser.add_argument("--dry-run", action="store_true", help="仅预览, 不下载")
     parser.add_argument("--timeout", type=int, default=60, help="HTTP 超时秒数")
     args = parser.parse_args()

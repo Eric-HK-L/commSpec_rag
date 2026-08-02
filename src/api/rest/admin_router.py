@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -14,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from src.api.rest.router import get_pipeline
@@ -81,6 +82,41 @@ class ManifestItem(BaseModel):
     ingested_at: str
 
 
+class UploadDocumentResponse(BaseModel):
+    """文档上传结果."""
+    filename: str
+    category: str          # marked | original | other
+    detected_kind: str     # 3gpp | oran | unknown
+    target_path: str       # 相对 data/documents 的路径
+    size_bytes: int
+    duplicate: bool = False  # 目标路径已存在 (已覆盖)
+
+
+class OtherDocumentItem(BaseModel):
+    """other/ 目录中的非 3GPP/O-RAN 文档."""
+    filename: str
+    size_bytes: int
+    modified_at: str
+    kind: str = "unknown"  # 非 3GPP/O-RAN 识别标记
+
+
+# 上传参数
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200MB
+_MD_EXTENSIONS = {".md", ".markdown"}
+# 3GPP 文件名: 5 位数字开头 (38300-60.docx / 38865.md)
+_SPEC5_NAME_RE = re.compile(r"^\d{5}")
+# 3GPP 文件名: TS/TR 前缀格式 (TS_38.300_R18_v17.0.0.docx / TR 23.501-18.docx)
+_SPEC_TS_TR_NAME_RE = re.compile(r"(?:TS|TR)[_\s]\d{2}\.\d{3}", re.IGNORECASE)
+# 3GPP 内容头: 3GPP TS 38.300 V18.4.0
+_HEADER_SPEC_RE = re.compile(r"3GPP\s+(?:TS|TR)\s+\d{2}\.\d{3}\s+V\d+\.\d+\.\d+", re.IGNORECASE)
+# 3GPP Release: V18.x → R18 / (Release 18)
+_HEADER_RELEASE_RE = re.compile(r"\bV(\d+)\.\d+\.\d+")
+_HEADER_RELEASE_PAREN_RE = re.compile(r"\(Release\s+(\d+)\)", re.IGNORECASE)
+# O-RAN 标识
+_ORAN_NAME_RE = re.compile(r"O-RAN\.", re.IGNORECASE)
+_ORAN_HEAD_RE = re.compile(r"O-RAN\s+ALLIANCE|O-RAN\s+WORKING\s+GROUP", re.IGNORECASE)
+
+
 # ── 端点实现 ──
 
 @admin_router.get("/stats", response_model=APIResponse[AdminStats])
@@ -137,11 +173,13 @@ async def admin_stats() -> APIResponse[AdminStats]:
 @admin_router.post("/ingest/trigger", response_model=APIResponse[IngestTriggerResponse])
 async def trigger_ingestion(
     mode: str = "incremental",
+    source: str = "marked",
 ) -> APIResponse[IngestTriggerResponse]:
     """触发摄入任务（后台子进程）.
 
     - mode=incremental: 增量模式（默认）
     - mode=full: 全量重建
+    - source=marked|original|all: 数据源 (默认 marked=Markdown 数据集)
     """
     global _ingest_process
 
@@ -154,11 +192,14 @@ async def trigger_ingestion(
             pid=_ingest_process.pid,
         ))
 
+    if source not in ("marked", "original", "all"):
+        raise HTTPException(status_code=400, detail="source 必须是 marked/original/all")
+
     # 构建命令
     script = _PROJECT_ROOT / "scripts" / "bulk_ingest.py"
     venv_python = sys.executable  # 使用当前 venv 的 Python (跨平台)
 
-    cmd = [venv_python, str(script)]
+    cmd = [venv_python, str(script), "--source", source]
     if mode == "full":
         cmd.append("--full-rebuild")
 
@@ -168,7 +209,7 @@ async def trigger_ingestion(
         with open(log_path, "w") as log_file:
             log_file.write(
                 f"{datetime.now(timezone.utc).isoformat()} [INFO] "
-                f"摄入任务启动 (mode={mode})\n"
+                f"摄入任务启动 (mode={mode}, source={source})\n"
             )
             _ingest_process = subprocess.Popen(
                 cmd,
@@ -177,7 +218,7 @@ async def trigger_ingestion(
                 cwd=str(_PROJECT_ROOT),
             )
 
-        logger.info("摄入任务已启动: PID=%d, mode=%s", _ingest_process.pid, mode)
+        logger.info("摄入任务已启动: PID=%d, mode=%s, source=%s", _ingest_process.pid, mode, source)
 
         return APIResponse.ok(IngestTriggerResponse(
             accepted=True,
@@ -281,6 +322,176 @@ async def delete_manifest_record(key: str) -> APIResponse[dict]:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"删除失败: {e}")
+
+
+# ── 文档上传 ──
+
+def _sanitize_filename(filename: str) -> str:
+    """清洗文件名: 去路径成分 + 危险字符."""
+    name = Path(filename or "unnamed").name
+    name = re.sub(r"[^\w.\-\(\)\u4e00-\u9fff]+", "_", name)
+    return name or "unnamed"
+
+
+def _classify_kind(filename: str, content_head: str) -> str:
+    """识别文档归属: 3gpp | oran | unknown.
+
+    判断依据 (文件名 + 内容头双保险):
+      - O-RAN: 文件名含 O-RAN. 或内容头含 O-RAN ALLIANCE / O-RAN Working Group
+      - 3GPP: 文件名以 5 位数字开头 或内容头含 "3GPP TS/TR xx.xxx Vx.x.x"
+      - 其他 → unknown
+    """
+    if _ORAN_NAME_RE.search(filename) or _ORAN_HEAD_RE.search(content_head):
+        return "oran"
+    if _SPEC5_NAME_RE.match(filename) or _SPEC_TS_TR_NAME_RE.search(filename) or _HEADER_SPEC_RE.search(content_head):
+        return "3gpp"
+    return "unknown"
+
+
+def _detect_3gpp_release(filename: str, content_head: str) -> str:
+    """检测 3GPP Release: 内容头 V18.x → R18 / (Release 18) → R18; 兜底 R18."""
+    m = _HEADER_RELEASE_RE.search(content_head)
+    if m:
+        return f"R{m.group(1)}"
+    m = _HEADER_RELEASE_PAREN_RE.search(content_head)
+    if m:
+        return f"R{m.group(1)}"
+    return "R18"
+
+
+def _spec_and_series(filename: str) -> tuple[str, str]:
+    """3GPP 文件名 → (spec_number, series). 如 38300-60.docx → (38.300, 38)."""
+    stem = Path(filename).stem
+    digits = "".join(ch for ch in stem if ch.isdigit())
+    if len(digits) >= 5:
+        return f"{digits[:2]}.{digits[2:5]}", digits[:2]
+    return "", ""
+
+
+@admin_router.post("/documents/upload", response_model=APIResponse[UploadDocumentResponse])
+async def upload_document(
+    file: UploadFile = File(...),
+    category: str | None = Query(None, description="手动指定目标目录: marked|original|other (默认自动归类)"),
+    release: str | None = Query(None, description="3GPP Release 覆盖 (如 R18/R19, 默认从内容检测)"),
+) -> APIResponse[UploadDocumentResponse]:
+    """上传文档到知识库源目录 (仅落盘, 不触发摄入).
+
+    自动归类规则:
+      - 文档属于 3GPP / O-RAN (文件名或内容头识别):
+          markdown 文件 → marked/ (遵循数据集目录结构)
+          其他格式     → original/ (后续 pandoc 处理)
+      - 非 3GPP / O-RAN 文档 → other/ (默认不摄入)
+
+    上传完成后需在「摄入管理」页触发增量摄入才会嵌入向量库。
+    """
+    filename = _sanitize_filename(file.filename or "unnamed")
+    ext = Path(filename).suffix.lower()
+
+    # 读取内容头用于识别 (读后 seek 回开头, 便于后续整体保存)
+    try:
+        head_bytes = await file.read(8192)
+        await file.seek(0)
+    except Exception:
+        head_bytes = b""
+    content_head = head_bytes.decode("utf-8", errors="ignore")[:4096]
+
+    # 1. 识别文档归属 + 目标目录
+    detected_kind = _classify_kind(filename, content_head)
+    if detected_kind == "unknown":
+        final_category = "other"  # 非 3GPP/O-RAN → other/ (不受格式影响)
+    elif category in ("marked", "original", "other"):
+        final_category = category  # 用户手动覆盖
+    elif ext in _MD_EXTENSIONS:
+        final_category = "marked"
+    else:
+        final_category = "original"
+
+    # 2. 构建目标路径 (相对 data/documents)
+    if final_category == "other":
+        rel = Path("other") / filename
+    elif detected_kind == "oran":
+        if final_category == "marked":
+            spec_dir = Path(filename).stem  # 如 O-RAN.WG4.TS.CUS.0-R005-v20.00
+            rel = Path("marked") / "ORAN" / spec_dir / "raw.md"
+        else:
+            rel = Path("original") / "ORAN" / filename
+    else:  # 3gpp
+        spec_number, series = _spec_and_series(filename)
+        if release and re.fullmatch(r"R\d+", release):
+            rel_release = release
+        else:
+            rel_release = _detect_3gpp_release(filename, content_head)
+        if final_category == "marked":
+            if spec_number:
+                spec_dir = spec_number.replace(".", "")  # 38.865 → 38865 (数据集目录结构)
+                rel = Path("marked") / rel_release / f"{series}_series" / spec_dir / "raw.md"
+            else:
+                rel = Path("marked") / filename
+        else:
+            if spec_number:
+                rel = Path("original") / rel_release / f"{series}_series" / filename
+            else:
+                rel = Path("original") / filename
+
+    # 3. 路径安全校验 + 保存
+    target_abs = settings.documents_abs_dir / rel
+    try:
+        target_abs.resolve().relative_to(settings.documents_abs_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="非法目标路径")
+
+    target_abs.parent.mkdir(parents=True, exist_ok=True)
+    duplicate = target_abs.exists()
+    size = 0
+    try:
+        with open(target_abs, "wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail="文件超过 200MB 上限")
+                out.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("上传保存失败 %s: %s", filename, e)
+        raise HTTPException(status_code=500, detail=f"保存失败: {e}")
+
+    logger.info("文档已上传: %s → %s (kind=%s, %d bytes)", filename, rel, detected_kind, size)
+    return APIResponse.ok(UploadDocumentResponse(
+        filename=filename,
+        category=final_category,
+        detected_kind=detected_kind,
+        target_path=str(rel).replace(os.sep, "/"),
+        size_bytes=size,
+        duplicate=duplicate,
+    ))
+
+
+@admin_router.get("/documents/other", response_model=APIResponse[list[OtherDocumentItem]])
+async def list_other_documents() -> APIResponse[list[OtherDocumentItem]]:
+    """列出 other/ 目录中的非 3GPP/O-RAN 文档.
+
+    这些文档既不属于 3GPP 也不属于 O-RAN，已归档到 other/ 目录，
+    不参与嵌入摄入。此端点用于管理员在后台标记/识别这类文档。
+    """
+    other_dir = settings.documents_other_dir
+    if not other_dir.exists():
+        return APIResponse.ok([])
+    items: list[OtherDocumentItem] = []
+    for f in sorted(other_dir.iterdir(), key=lambda p: p.name.lower()):
+        if not f.is_file():
+            continue
+        st = f.stat()
+        items.append(OtherDocumentItem(
+            filename=f.name,
+            size_bytes=st.st_size,
+            modified_at=datetime.fromtimestamp(st.st_mtime).isoformat(),
+        ))
+    logger.info("other/ 目录列表: %d 个非 3GPP/O-RAN 文档", len(items))
+    return APIResponse.ok(items)
 
 
 # ── 响应模型（新增） ──

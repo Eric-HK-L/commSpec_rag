@@ -111,7 +111,7 @@ def _start_release_monitor() -> threading.Thread | None:
 async def lifespan(app: FastAPI):
     global _store, _pipeline
     logger.info("=" * 50)
-    logger.info("3GPP RAG 启动 — LLM: %s, 向量库: %s", settings.llm_model, settings.vector_db)
+    logger.info("CommSpec RAG 启动 — LLM: %s, 向量库: %s", settings.llm_model, settings.vector_db)
 
     # ── Task 6: 在线搜索配置验证 ──
     _validate_online_search_config()
@@ -139,13 +139,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="3GPP RAG API",
-    description="""3GPP 规范检索增强生成系统 — 支持语义搜索、RAG 问答、文档管理。
+    title="CommSpec RAG API",
+    description="""通信规范（3GPP / O-RAN）检索增强生成系统 — 支持语义搜索、RAG 问答、文档管理。
 
 ## 主要功能
 - **Search**: Dense 向量检索 + BM25 混合检索
 - **Ask**: RAG 增强的 LLM 问答, 含幻觉验证
-- **Documents**: 3GPP 规范文档 CRUD 管理
+- **Documents**: 规范文档 CRUD 管理
 - **Ingestion**: DOCX 摄入管线 (下载→转换→分块→嵌入)
 - **Streaming**: SSE 流式生成, 逐 token 推送
 """,

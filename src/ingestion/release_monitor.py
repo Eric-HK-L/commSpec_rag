@@ -69,7 +69,7 @@ class ReleaseMonitor:
         manifest_path: str | Path | None = None,
         on_change: Callable[[ChangeReport], None] | None = None,
     ):
-        self._doc_dir = Path(doc_dir) if doc_dir else settings.documents_abs_dir
+        self._doc_dir = Path(doc_dir) if doc_dir else settings.documents_original_dir
         self._manifest_path = Path(manifest_path) if manifest_path else settings.manifest_path
         self._on_change = on_change
         self._last_manifest: dict = {}
@@ -287,7 +287,7 @@ def _cli_main() -> None:
     parser = argparse.ArgumentParser(description="3GPP 文档变更监控")
     parser.add_argument("--check", action="store_true", help="检测变更")
     parser.add_argument("--auto", action="store_true", help="自动触发增量索引")
-    parser.add_argument("--doc-dir", default=str(settings.documents_abs_dir), help="文档目录")
+    parser.add_argument("--doc-dir", default=str(settings.documents_original_dir), help="文档目录")
     parser.add_argument("--manifest", default=str(settings.manifest_path))
     args = parser.parse_args()
 

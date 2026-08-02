@@ -754,4 +754,4 @@ offline/
 
 ---
 
-> **相关文档**：[硬件兼容性指南](./hardware-compatibility.md) | [架构设计](./architecture.md)
+> **相关文档**：[硬件兼容性指南](../design/hardware-compatibility.md) | [架构设计](../design/architecture.md)

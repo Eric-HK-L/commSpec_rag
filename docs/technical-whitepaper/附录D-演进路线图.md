@@ -24,7 +24,7 @@ tags: [roadmap, future, planning]
 
 ### v0.3.1 — 扩展支持
 - [ ] R19 规范支持 (当前仅 R18)
-- [ ] PPT/PDF 格式支持 (扩展 Docling 管线)
+- [ ] PPT/PDF 格式支持 (扩展 Pandoc 管线)
 - [ ] 多 Collection 管理 (按 Release 分离向量库)
 - [ ] 嵌入模型热切换 (运行时切换嵌入模型)
 

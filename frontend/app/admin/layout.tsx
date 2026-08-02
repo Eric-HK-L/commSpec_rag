@@ -4,13 +4,13 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 const NAV = [
-  { href: "/admin", label: "📊 仪表盘" },
-  { href: "/admin/documents", label: "📄 文档管理" },
-  { href: "/admin/ingestion", label: "⚙️ 摄入管理" },
-  { href: "/admin/search", label: "🔍 搜索测试" },
-  { href: "/admin/feedback", label: "💬 反馈分析" },
-  { href: "/admin/logs", label: "📋 系统日志" },
-  { href: "/admin/system", label: "🖥 系统健康" },
+  { href: "/admin", label: "仪表盘" },
+  { href: "/admin/documents", label: "文档管理" },
+  { href: "/admin/ingestion", label: "摄入管理" },
+  { href: "/admin/search", label: "搜索测试" },
+  { href: "/admin/feedback", label: "反馈分析" },
+  { href: "/admin/logs", label: "系统日志" },
+  { href: "/admin/system", label: "系统健康" },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -61,7 +61,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                        hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 dark:hover:text-red-400
                        transition-colors text-left"
           >
-            🚪 退出登录
+            退出登录
           </button>
         </div>
       </aside>

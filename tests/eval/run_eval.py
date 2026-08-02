@@ -35,7 +35,7 @@ def load_test_set(path: str) -> list[EvalSample]:
 def format_report(report: EvalReport, elapsed_ms: float) -> str:
     """格式化评测报告为 Markdown 表格."""
     lines = [
-        "# 3GPP RAG 检索评测报告",
+        "# CommSpec RAG 检索评测报告",
         "",
         f"- **样本数**: {report.total}",
         f"- **耗时**: {elapsed_ms / 1000:.1f}s",
@@ -154,7 +154,7 @@ def _dry_run(samples: list[EvalSample]) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="3GPP RAG 检索评测")
+    parser = argparse.ArgumentParser(description="CommSpec RAG 检索评测")
     parser.add_argument(
         "--test-set", default=None,
         help="测试集 JSON 路径 (默认: tests/eval/test_set.json)"

@@ -18,7 +18,7 @@ from typing import Callable
 from src.config import settings, ingestion_config
 from src.ingestion.embedder import BatchEmbedder
 from src.ingestion.embedding_cache import EmbeddingCache
-from src.ingestion.extractor import DoclingExtractor, ExtractionResult
+from src.ingestion.extractor import PandocExtractor, ExtractionResult
 from src.ingestion.splitter import HeaderAwareSplitter, classify_chunk
 from src.retriever.vector_store import Chunk, VectorStore
 
@@ -83,7 +83,7 @@ class IngestionOrchestrator:
         """执行完整摄入管线.
 
         Args:
-            release: 3GPP Release.
+            release: 规范 Release (如 R18).
             series: Series 编号.
             spec: 单篇规范号.
             docx_dir: 直接指定 DOCX 目录 (跳过下载).
@@ -98,12 +98,12 @@ class IngestionOrchestrator:
         if not self._skip["download"] and docx_dir is None:
             self._notify("download", "running")
             from scripts.download_specs import SpecDownloader
-            downloader = SpecDownloader(output_dir=str(settings.documents_abs_dir))
+            downloader = SpecDownloader(output_dir=str(settings.documents_original_dir))
             downloader.download(release=release, series=series, spec=spec, dry_run=False)
             self._notify("download", "completed")
 
         # Step 2: 查找 DOCX
-        search_dir = Path(docx_dir) if docx_dir else settings.documents_abs_dir
+        search_dir = Path(docx_dir) if docx_dir else settings.documents_original_dir
         docx_files = list(search_dir.rglob("*.docx"))
         stats.docs_total = len(docx_files)
         logger.info("找到 %d 个 DOCX 文件", stats.docs_total)
@@ -116,7 +116,7 @@ class IngestionOrchestrator:
         extraction_results: list[ExtractionResult] = []
         if not self._skip["extract"]:
             self._notify("extract", "running")
-            extractor = DoclingExtractor()
+            extractor = PandocExtractor()
             extraction_results = extractor.extract_directory(str(search_dir))
             stats.docs_success = sum(1 for r in extraction_results if r.markdown)
             self._notify("extract", "completed")

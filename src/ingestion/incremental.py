@@ -111,10 +111,10 @@ class IncrementalIndexer:
             {"inserted": N, "deleted": N}.
         """
         from src.ingestion.embedder import BatchEmbedder
-        from src.ingestion.extractor import DoclingExtractor
+        from src.ingestion.extractor import PandocExtractor
         from src.ingestion.splitter import HeaderAwareSplitter
 
-        extractor = DoclingExtractor()
+        extractor = PandocExtractor()
         splitter = HeaderAwareSplitter()
         embedder = BatchEmbedder(cache_dir=str(settings.data_abs_dir / "cache" / "embeddings"))
 

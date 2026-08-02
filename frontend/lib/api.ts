@@ -1,4 +1,4 @@
-/** 3GPP RAG API 调用层 */
+/** CommSpec RAG API 调用层 */
 
 const API_URL = "/api/v1"; // 请求经由 Next.js rewrites 反向代理转发至后端，规避跨域与硬编码IP问题
 
@@ -94,6 +94,13 @@ export interface ManifestItem {
   sha256: string;
   chunk_count: number;
   ingested_at: string;
+}
+
+export interface OtherDocumentItem {
+  filename: string;
+  size_bytes: number;
+  modified_at: string;
+  kind: string;
 }
 
 export interface IngestStatus {
@@ -277,10 +284,48 @@ export async function getAdminStats() {
 }
 
 /** 触发摄入 */
-export async function triggerIngestion(mode: "incremental" | "full" = "incremental") {
+export async function triggerIngestion(
+  mode: "incremental" | "full" = "incremental",
+  source: "marked" | "original" | "all" = "marked",
+) {
   return apiPost<{ accepted: boolean; message: string; mode: string; pid: number | null }>(
-    `/admin/ingest/trigger?mode=${mode}`, {}
+    `/admin/ingest/trigger?mode=${mode}&source=${source}`, {}
   );
+}
+
+/** 上传文档 (自动归类: markdown→marked/, 其他→original/, 非3GPP/O-RAN→other/) */
+export async function uploadDocument(
+  file: File,
+  category?: "marked" | "original" | "other",
+  release?: string,
+) {
+  const form = new FormData();
+  form.append("file", file);
+  const params = new URLSearchParams();
+  if (category) params.set("category", category);
+  if (release) params.set("release", release);
+  const qs = params.toString();
+  const res = await fetch(`${API_URL}/admin/documents/upload${qs ? `?${qs}` : ""}`, {
+    method: "POST",
+    body: form,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { detail?: string }).detail || `API ${res.status}`);
+  return data as {
+    data: {
+      filename: string;
+      category: string;
+      detected_kind: string;
+      target_path: string;
+      size_bytes: number;
+      duplicate: boolean;
+    };
+  };
+}
+
+/** other/ 目录中的非 3GPP/O-RAN 文档列表 (不参与摄入) */
+export async function getOtherDocuments() {
+  return apiGet<OtherDocumentItem[]>("/admin/documents/other");
 }
 
 /** 摄入状态 */

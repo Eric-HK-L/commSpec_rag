@@ -52,7 +52,7 @@ def mock_store():
 
     # hybrid_search: 签名匹配 MilvusStore.hybrid_search
     def _hybrid_search(query_embedding=None, query_text=None, dense_top_k=100,
-                       sparse_top_k=100, final_top_k=10):
+                       sparse_top_k=100, final_top_k=10, filter_expr=None):
         return _default_results[:final_top_k]
 
     store.search_dense = _search_dense
@@ -221,7 +221,7 @@ class TestPipelineAsk:
 
         pipeline2 = RAGPipeline(vector_store=empty_store, llm_client=mock_llm)
         response = pipeline2.ask("nonexistent query")
-        assert "未在 3GPP 规范中找到" in response.answer
+        assert "未在规范库中找到" in response.answer
         assert len(response.sources) == 0
 
     def test_ask_llm_error_handling(self, mock_store, mock_llm, monkeypatch):

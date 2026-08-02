@@ -36,7 +36,7 @@ export default function DocumentDetailPage() {
         <span className="text-lg leading-none">←</span> 返回文档列表
       </Link>
 
-      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">📄 文档详情</h1>
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">文档详情</h1>
 
       {/* 元数据 */}
       {doc && (

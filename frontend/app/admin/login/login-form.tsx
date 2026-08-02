@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 const VALID_USERNAME = "admin";
 const VALID_PASSWORD = "linux123";
 const AUTH_COOKIE = "admin_auth";
-const AUTH_VALUE = "3gpp_admin_authenticated";
+const AUTH_VALUE = "commspec_admin_authenticated";
 
 export function LoginForm() {
   const router = useRouter();
@@ -44,7 +44,7 @@ export function LoginForm() {
                 <path d="M3 8V4m3 4V4m3 4V4M2 10h8" />
               </svg>
             </span>
-            <span className="font-extrabold text-xl text-gray-800 dark:text-gray-200">3GPP</span>
+            <span className="font-extrabold text-xl text-gray-800 dark:text-gray-200">CommSpec</span>
             <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 uppercase tracking-wider">RAG</span>
           </div>
           <h1 className="text-lg font-semibold text-gray-700 dark:text-gray-300">管理员登录</h1>

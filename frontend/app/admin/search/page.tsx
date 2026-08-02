@@ -74,7 +74,7 @@ export default function SearchTestPage() {
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">🔍 搜索测试台</h1>
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">搜索测试台</h1>
 
       <form onSubmit={handleTest} className="flex gap-3 items-center">
         <input
@@ -109,7 +109,9 @@ export default function SearchTestPage() {
           }`}
           title={rerankerEnabled ? "精排已启用" : "精排已关闭"}
         >
-          {rerankerEnabled ? "🎯" : "⚡"}
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" />
+          </svg>
         </button>
         <button
           type="submit"
@@ -123,9 +125,9 @@ export default function SearchTestPage() {
       {/* 耗时分解 */}
       {elapsed && (
         <div className="flex gap-4 text-xs text-gray-500 dark:text-gray-400">
-          <span>🔍 检索: {(elapsed.search).toFixed(0)}ms</span>
-          <span>🤖 LLM: {(elapsed.ask).toFixed(0)}ms</span>
-          <span>🎯 精排: {rerankerEnabled ? "已启用" : "已关闭"}</span>
+          <span>检索: {(elapsed.search).toFixed(0)}ms</span>
+          <span>LLM: {(elapsed.ask).toFixed(0)}ms</span>
+          <span>精排: {rerankerEnabled ? "已启用" : "已关闭"}</span>
         </div>
       )}
 
@@ -138,7 +140,7 @@ export default function SearchTestPage() {
                        bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300
                        hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors`}
           >
-            {batchMode ? "收起批量对比" : "📊 批量对比 (NR L1)"}
+            {batchMode ? "收起批量对比" : "批量对比 (NR L1)"}
           </button>
           {batchLoading && <span className="text-sm text-gray-400 dark:text-gray-500">加载中...</span>}
         </div>
@@ -186,7 +188,7 @@ export default function SearchTestPage() {
         {/* LLM 回答 (带 Markdown) */}
         <div className="space-y-3">
           <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase">
-            LLM 回答 {answer && <span className="font-normal text-gray-400 dark:text-gray-500">(已验证: {answer.verified ? "✅" : "⚠️"})</span>}
+            LLM 回答 {answer && <span className="font-normal text-gray-400 dark:text-gray-500">(已验证: {answer.verified ? "是" : "否"})</span>}
           </h2>
           {answer ? (
             <>
@@ -223,7 +225,7 @@ export default function SearchTestPage() {
 
               {answer.warnings.length > 0 && (
                 <div className="p-3 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 text-sm text-yellow-700 dark:text-yellow-300">
-                  {answer.warnings.map((w, i) => <div key={i}>⚠️ {w}</div>)}
+                  {answer.warnings.map((w, i) => <div key={i}>{w}</div>)}
                 </div>
               )}
 

@@ -349,4 +349,4 @@ MPS Bug:  True
 
 > **多语言场景**: 所有平台统一使用 BGE-M3, `LOCAL_EMBEDDING_MODEL=BAAI/bge-m3`。
 
-> **内网离线部署**: 参见 [docs/offline-deployment.md](./offline-deployment.md)。
+> **内网离线部署**: 参见 [docs/deployment/offline-deployment.md](../deployment/offline-deployment.md)。

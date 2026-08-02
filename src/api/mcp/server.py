@@ -7,10 +7,10 @@
 Claude Desktop 配置 (~/Library/Application Support/Claude/claude_desktop_config.json):
 {
   "mcpServers": {
-    "3gpp-rag": {
+    "commspec-rag": {
       "command": "/path/to/.venv/bin/python3",
       "args": ["-m", "src.api.mcp.server"],
-      "cwd": "/path/to/3GPP_RAG_project"
+      "cwd": "/path/to/commSpec_rag"
     }
   }
 }
@@ -92,7 +92,7 @@ class MCPServer:
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
                 "serverInfo": {
-                    "name": "3gpp-rag-mcp",
+                    "name": "commspec-rag-mcp",
                     "version": "0.2.0",
                 },
             }
@@ -125,7 +125,7 @@ def run_stdio():
     )
 
     server = MCPServer()
-    logger.info("3GPP RAG MCP Server 启动 (stdio)")
+    logger.info("CommSpec RAG MCP Server 启动 (stdio)")
 
     for line in sys.stdin:
         line = line.strip()
