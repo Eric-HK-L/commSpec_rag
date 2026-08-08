@@ -8,7 +8,7 @@ include = ["src", "src.*"]
 
 [project]
 name = "commspec-rag"
-version = "0.3.0"
+version = "0.4.0"
 description = "通信协议规范 RAG 融合项目 — 支持 3GPP + O-RAN 协议智能检索增强生成"
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
