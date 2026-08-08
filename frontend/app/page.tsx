@@ -282,6 +282,11 @@ export default function HomePage() {
           }
         }
 
+        // 流结束 (EOF) — 无论是否收到 done/error 事件都复位状态,
+        // 防止连接中断/后端未发 done 时永久卡 loading
+        setLoading(false);
+        setStreaming(false);
+
         // 完成：添加助手消息
         if (fullAnswer) {
           const assistantMsg: Message = {

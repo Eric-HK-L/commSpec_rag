@@ -54,9 +54,9 @@ class ChatMessage(BaseModel):
 class AskRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000)
     top_k: int = Field(default=10, ge=1, le=50)
-    release: str | None = Field(default=None, description="Release 过滤, 如 'R18'")
-    series: str | None = Field(default=None, description="Series 过滤, 如 '38'")
-    doc_type: str | None = Field(default=None, description="文档类型过滤, '3gpp' 或 'oran'")
+    release: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._-]*$", description="Release 过滤, 如 'R18'")
+    series: str | None = Field(default=None, pattern=r"^[0-9]*$", description="Series 过滤, 如 '38'")
+    doc_type: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._-]*$", description="文档类型过滤, '3gpp' 或 'oran'")
     reranker_enabled: bool = Field(default=True, description="是否启用 Cross-Encoder 精排 (质量优先, 关闭可提速)")
     history: list[ChatMessage] = Field(default_factory=list, description="多轮对话历史 (用于上下文理解)")
 
@@ -127,8 +127,10 @@ async def search_endpoint(req: SearchRequest) -> APIResponse[SearchResponse]:
     pipeline = get_pipeline()
     try:
         # 多取 2x 结果以补偿低质量过滤
-        results = pipeline.search(
-            req.query, top_k=req.top_k * 2,
+        results = await asyncio.to_thread(
+            pipeline.search,
+            req.query,
+            top_k=req.top_k * 2,
             release=req.filters.release if req.filters else None,
             series=req.filters.series if req.filters else None,
             doc_type=req.filters.doc_type if req.filters else None,
@@ -152,7 +154,8 @@ async def search_endpoint(req: SearchRequest) -> APIResponse[SearchResponse]:
 async def ask_endpoint(req: AskRequest) -> AskResponse:
     pipeline = get_pipeline()
     try:
-        response = pipeline.ask(
+        response = await asyncio.to_thread(
+            pipeline.ask,
             req.query,
             reranker_enabled=req.reranker_enabled,
             history=[h.model_dump() for h in req.history] if req.history else None,
@@ -177,7 +180,7 @@ def _result_to_source(r: RetrievalResult) -> SourceItem:
     return SourceItem(
         chunk_id=r.chunk_id,
         text=r.text[:500],
-        score=round(r.score, 4),
+        score=round(float(r.score), 4),
         doc_id=r.doc_id,
         series=r.series,
         spec_number=r.spec_number,
@@ -203,8 +206,10 @@ async def search_count_endpoint(req: SearchRequest) -> APIResponse[int]:
     """返回检索结果总数 (不含具体内容)."""
     pipeline = get_pipeline()
     try:
-        results = pipeline.search(
-            req.query, top_k=req.top_k,
+        results = await asyncio.to_thread(
+            pipeline.search,
+            req.query,
+            top_k=req.top_k,
             release=req.filters.release if req.filters else None,
             series=req.filters.series if req.filters else None,
             doc_type=req.filters.doc_type if req.filters else None,
@@ -325,7 +330,10 @@ async def delete_document(doc_id: str) -> APIResponse[dict]:
     """删除文档及其全部 chunks，同步更新摄入清单。"""
     pipeline = get_pipeline()
     try:
-        deleted = pipeline._store.delete_by_filter(f"doc_id == '{doc_id}'")
+        from src.retriever.milvus_store import _escape_milvus_expr
+        deleted = pipeline._store.delete_by_filter(
+            f"doc_id == '{_escape_milvus_expr(doc_id)}'"
+        )
         # 同步删除 manifest 中对应条目
         try:
             from src.ingestion.manifest import IngestionManifest
@@ -355,7 +363,7 @@ def _serialize_source(r) -> dict:
     return {
         "chunk_id": str(r.chunk_id),
         "text": r.text[:300],
-        "score": round(r.score, 4),
+        "score": round(float(r.score), 4),
         "spec_number": r.spec_number,
         "parent_section_id": r.parent_section_id,
         "parent_title": r.parent_title,

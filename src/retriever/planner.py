@@ -15,6 +15,7 @@ import copy
 import hashlib
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -32,6 +33,7 @@ from src.generator.release_aware import (
 )
 from src.retriever.cross_ref import _deduplicate_refs, extract_references
 from src.retriever.graph_expander import GraphExpander
+from src.retriever.milvus_store import _escape_milvus_expr
 from src.retriever.multi_hop import MultiHopRetriever, needs_multi_hop
 from src.retriever.online_supplement import OnlineSupplement
 from src.retriever.query_quality import diagnose_quality, evaluate_quality, filter_noise
@@ -122,6 +124,8 @@ class RetrievalPlanner:
         self._graph_expander: GraphExpander | None = None
         # 查询扩展结果缓存 (query+history 指纹, TTL 1h)
         self._expand_cache: TTLCache = TTLCache(maxsize=512, ttl=3600)
+        # TTLCache 非线程安全 — SSE 后台线程与事件循环线程并发访问, 需加锁
+        self._expand_lock = threading.Lock()
         xref_path = settings.data_abs_dir / "processed" / "xref_graph.json"
         if xref_path.exists():
             try:
@@ -162,12 +166,12 @@ class RetrievalPlanner:
         # Step 3: 混合检索
         t_search = time.time()
         filter_expr = self._build_filter_expr(release=release, series=series, doc_type=doc_type)
-        # 若启用 reranker, 先用大池子检索再精排
+        # 若启用 reranker, 先用大池子检索再精排 (final_top_k 作为参数传入, 避免共享可变状态)
         search_top_k = settings.reranker_top_k if reranker_enabled else settings.max_search_results
-        old_final = self._retriever._final_top_k
-        self._retriever._final_top_k = search_top_k
-        results = self._retriever.search(expanded_query, query_embedding, filter_expr=filter_expr)
-        self._retriever._final_top_k = old_final
+        results = self._retriever.search(
+            expanded_query, query_embedding,
+            filter_expr=filter_expr, final_top_k=search_top_k,
+        )
 
         # Step 3.1: 分类列举查询 → 多角度分解检索
         if is_taxonomy_query(search_query):
@@ -180,6 +184,7 @@ class RetrievalPlanner:
             query=query, expanded_query=expanded_query,
             query_embedding=query_embedding, results=results,
             top_k=settings.max_search_results, reranker_enabled=reranker_enabled,
+            filter_expr=filter_expr,
         )
 
         # Step 3.1b: 分类列举查询 → 元数据 boost
@@ -198,7 +203,10 @@ class RetrievalPlanner:
                 len({r.spec_number for r in results if r.spec_number}) / len(results),
             )
             try:
-                results = self._multi_hop.search(search_query, query_embedding)
+                results = self._multi_hop.search(
+                    search_query, query_embedding,
+                    initial_results=results, filter_expr=filter_expr,
+                )
             except Exception as e:
                 logger.warning("多跳检索失败, 使用单跳结果: %s", e)
                 record_error("multi_hop_failed")
@@ -213,7 +221,7 @@ class RetrievalPlanner:
                 results = results + expanded_results
                 logger.info("图增强检索: +%d 条 cross-spec chunk", len(expanded))
         else:
-            results = self._resolve_cross_refs(results, max_refs=5)
+            results = self._resolve_cross_refs(results, max_refs=5, filter_expr=filter_expr)
 
         # Step 3.6: 检索质量评估
         quality = evaluate_quality(results)
@@ -274,14 +282,13 @@ class RetrievalPlanner:
         _top_k = top_k or settings.max_search_results
         # 若启用 reranker, 混合检索用更大的候选池 (reranker 从 N 条中精选 top_k)
         pool_size = settings.reranker_top_k if reranker_enabled else _top_k
-        if top_k is not None:
-            self._retriever._final_top_k = top_k
-        else:
-            self._retriever._final_top_k = pool_size
         expanded_query = self._expand_query(query)
         query_embedding = self._get_query_embedding(expanded_query)
         filter_expr = self._build_filter_expr(release=release, series=series, doc_type=doc_type)
-        results = self._retriever.search(expanded_query, query_embedding, filter_expr=filter_expr)
+        results = self._retriever.search(
+            expanded_query, query_embedding,
+            filter_expr=filter_expr, final_top_k=top_k if top_k is not None else pool_size,
+        )
 
         # Cross-Encoder Reranker 精排 (先执行, 提升候选池质量)
         results = self._rerank(expanded_query, results, _top_k, reranker_enabled=reranker_enabled)
@@ -291,7 +298,7 @@ class RetrievalPlanner:
         if spec_hints:
             results = _spec_aware_rerank(
                 results, spec_hints, self._retriever._store,
-                query_embedding, _top_k,
+                query_embedding, _top_k, filter_expr=filter_expr,
             )
 
         return results
@@ -348,7 +355,8 @@ class RetrievalPlanner:
         cache_key = hashlib.sha256(
             f"{query.lower().strip()}|{_history_fingerprint(history)}".encode()
         ).hexdigest()
-        cached = self._expand_cache.get(cache_key)
+        with self._expand_lock:
+            cached = self._expand_cache.get(cache_key)
         if cached is not None:
             logger.debug("查询扩展缓存命中: %.60s", query)
             return cached
@@ -357,7 +365,8 @@ class RetrievalPlanner:
             messages = build_query_expansion_prompt(query, history)
             expanded = self._llm.chat(messages)
             if expanded and len(expanded) > 5:
-                self._expand_cache[cache_key] = expanded
+                with self._expand_lock:
+                    self._expand_cache[cache_key] = expanded
                 return expanded
         except Exception as e:
             logger.warning("查询扩展失败: %s", e)
@@ -385,6 +394,16 @@ class RetrievalPlanner:
         Returns:
             (search_query, expanded_query). 失败时回退到原串行路径, 不损失质量.
         """
+        # 非英文查询同样走缓存 (修复: 此前只缓存英文扩展, 非英文每次重复调 LLM)
+        cache_key = hashlib.sha256(
+            f"tr|{source_lang}|{query.lower().strip()}|{_history_fingerprint(history)}".encode()
+        ).hexdigest()
+        with self._expand_lock:
+            cached = self._expand_cache.get(cache_key)
+        if cached is not None:
+            logger.debug("翻译+扩展缓存命中: %.60s", query)
+            return cached
+
         try:
             user_content = f"用户查询: {query}"
             if history and len(history) >= 2:
@@ -411,6 +430,8 @@ class RetrievalPlanner:
                     expanded = line[len("EXPANDED:"):].strip()
             if len(translated) > 3 and len(expanded) > 3:
                 logger.info("翻译+扩展合并: %s → EN (%.60s)", source_lang, translated)
+                with self._expand_lock:
+                    self._expand_cache[cache_key] = (translated, expanded)
                 return translated, expanded
             logger.warning("合并解析失败, 回退串行路径: %.80s", result[:80])
         except Exception as e:
@@ -437,6 +458,7 @@ class RetrievalPlanner:
         results: list[RetrievalResult],
         top_k: int,
         reranker_enabled: bool = True,
+        filter_expr: str | None = None,
     ) -> list[RetrievalResult]:
         """检索后处理: Cross-Encoder 精排 → spec-aware 定向补充+加权.
 
@@ -451,7 +473,7 @@ class RetrievalPlanner:
         if spec_hints:
             results = _spec_aware_rerank(
                 results, spec_hints, self._retriever._store,
-                query_embedding, top_k,
+                query_embedding, top_k, filter_expr=filter_expr,
             )
         return results
 
@@ -475,36 +497,43 @@ class RetrievalPlanner:
         if reranker is None or len(results) <= top_k:
             return results[:top_k]
 
-        # 保存原始分数并归一化到 [0, 1]
-        orig_scores = np.array([r.score for r in results], dtype=np.float32)
-        orig_min, orig_max = orig_scores.min(), orig_scores.max()
-        if orig_max > orig_min:
-            orig_norm = (orig_scores - orig_min) / (orig_max - orig_min)
-        else:
-            orig_norm = np.ones_like(orig_scores) * 0.5
+        # 保存原始分数 (按 chunk_id 映射, 供融合时对齐 — reranker 会改变顺序)
+        orig_by_id = {str(r.chunk_id): r.score for r in results}
+        orig_scores = np.array(list(orig_by_id.values()), dtype=np.float32)
+        orig_min = float(orig_scores.min()) if len(orig_scores) else 0.0
+        orig_max = float(orig_scores.max()) if len(orig_scores) else 0.0
 
         try:
             # 获取 Cross-Encoder 分数 (reranker 内部会设置 result.score)
-            reranked = reranker.rerank(query, results, top_k=len(results))
+            reranked = reranker.rerank(query, results, top_k=top_k)
         except Exception as e:
             logger.warning("Reranker 失败, 降级返回原始候选: %s", e)
+            return results[:top_k]
+
+        if not reranked:
             return results[:top_k]
 
         # 归一化 reranker 分数到 [0, 1]
         rerank_scores = np.array([r.score for r in reranked], dtype=np.float32)
         rerank_min, rerank_max = rerank_scores.min(), rerank_scores.max()
-        if rerank_max > rerank_min:
-            rerank_norm = (rerank_scores - rerank_min) / (rerank_max - rerank_min)
-        else:
-            rerank_norm = np.ones_like(rerank_scores) * 0.5
 
         # 加权融合: reranker 60% + 原始 40%
         ALPHA = 0.6
-        combined = ALPHA * rerank_norm + (1 - ALPHA) * orig_norm
+        for r in reranked:
+            orig = orig_by_id.get(str(r.chunk_id), 0.0)
+            if orig_max > orig_min:
+                orig_norm = (orig - orig_min) / (orig_max - orig_min)
+            else:
+                orig_norm = 0.5
+            if rerank_max > rerank_min:
+                rerank_norm = (r.score - rerank_min) / (rerank_max - rerank_min)
+            else:
+                rerank_norm = 0.5
+            # 必须转回 Python float — numpy 标量 (np.float32) 无法被 json.dumps 序列化,
+            # 会导致 SSE sources 事件序列化崩溃 (TypeError: float32 not JSON serializable)
+            r.score = float(ALPHA * rerank_norm + (1 - ALPHA) * orig_norm)
 
         # 写回融合分数并排序
-        for r, s in zip(reranked, combined):
-            r.score = float(s)
         reranked.sort(key=lambda r: r.score, reverse=True)
         return reranked[:top_k]
 
@@ -559,10 +588,10 @@ class RetrievalPlanner:
         for sub_q, sub_embed in zip(sub_queries, sub_embeds):
             try:
                 # 子查询用较小的 top_k, 避免单子查询占据全部上下文
-                old_final = self._retriever._final_top_k
-                self._retriever._final_top_k = max(settings.max_search_results // 2, 5)
-                sub_results = self._retriever.search(sub_q, sub_embed, filter_expr=filter_expr)
-                self._retriever._final_top_k = old_final
+                sub_results = self._retriever.search(
+                    sub_q, sub_embed, filter_expr=filter_expr,
+                    final_top_k=max(settings.max_search_results // 2, 5),
+                )
 
                 for r in sub_results:
                     rid = str(r.chunk_id)
@@ -622,6 +651,7 @@ class RetrievalPlanner:
         self,
         results: list[RetrievalResult],
         max_refs: int = 5,
+        filter_expr: str | None = None,
     ) -> list[RetrievalResult]:
         """从检索结果中解析交叉引用并二次检索补充上下文.
 
@@ -664,7 +694,9 @@ class RetrievalPlanner:
         embeddings = self._get_query_embeddings([q for _, q in ref_queries])
         for (ref, query), embedding in zip(ref_queries, embeddings):
             try:
-                ref_results = self._retriever.search(query, embedding)
+                ref_results = self._retriever.search(
+                    query, embedding, filter_expr=filter_expr,
+                )
                 for r in ref_results:
                     if r.chunk_id not in seen_ids:
                         seen_ids.add(r.chunk_id)
@@ -706,9 +738,9 @@ class RetrievalPlanner:
             # 3GPP 明确选中: release/series 正常生效
             parts: list[str] = []
             if release:
-                parts.append(f'release == "{release}"')
+                parts.append(f'release == "{_escape_milvus_expr(release)}"')
             if series:
-                parts.append(f"series == {series}")
+                parts.append(f"series == {_escape_milvus_expr(series)}")
             parts.append('doc_type == "3gpp"')
             return " && ".join(parts)
 
@@ -716,9 +748,9 @@ class RetrievalPlanner:
         if has_filter:
             parts_3gpp: list[str] = []
             if release:
-                parts_3gpp.append(f'release == "{release}"')
+                parts_3gpp.append(f'release == "{_escape_milvus_expr(release)}"')
             if series:
-                parts_3gpp.append(f"series == {series}")
+                parts_3gpp.append(f"series == {_escape_milvus_expr(series)}")
             parts_3gpp.append('doc_type == "3gpp"')
             return f'(({" && ".join(parts_3gpp)}) || doc_type == "oran")'
 
@@ -742,6 +774,7 @@ def _spec_aware_rerank(
     query_embedding,
     top_k: int,
     boost_factor: float = 2.0,
+    filter_expr: str | None = None,
 ) -> list["RetrievalResult"]:
     """两阶段 spec-aware 重排序.
 
@@ -755,11 +788,14 @@ def _spec_aware_rerank(
     # Phase 2: 定向检索 hint specs (用 Milvus 标量过滤)
     for spec in list(spec_hints)[:3]:  # 最多 3 个 hint spec
         try:
-            from src.retriever.milvus_store import _escape_milvus_expr
             escaped_spec = _escape_milvus_expr(spec)
+            spec_expr = f'spec_number == "{escaped_spec}"'
+            # 保留用户级过滤 (release/series/doc_type), 避免补充结果污染过滤语义
+            if filter_expr:
+                spec_expr = f"({filter_expr}) && ({spec_expr})"
             spec_results = store.search_dense(
                 query_embedding, top_k=5,
-                filter_expr=f'spec_number == "{escaped_spec}"',
+                filter_expr=spec_expr,
             )
             for r in spec_results[:5]:
                 rid = str(r.chunk_id) if hasattr(r, 'chunk_id') else str(id(r))  # 统一 str 去重

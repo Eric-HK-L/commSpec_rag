@@ -3,7 +3,12 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci --omit=dev
+# next build 需要 typescript/tailwindcss 等 devDependencies, 不能 --omit=dev
+RUN npm ci
+
+# BACKEND_URL 在 next build 时烘焙进 rewrites, 需在构建阶段注入
+ARG BACKEND_URL=http://localhost:8000
+ENV BACKEND_URL=$BACKEND_URL
 
 COPY frontend/ ./
 RUN npm run build

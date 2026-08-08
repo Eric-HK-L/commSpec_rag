@@ -154,18 +154,27 @@ class MultiHopRetriever:
         self,
         query: str,
         query_embedding: np.ndarray,
+        initial_results: list | None = None,
+        filter_expr: str | None = None,
     ) -> list[RetrievalResult]:
         """执行多跳检索.
 
         Args:
             query: 原始查询文本.
             query_embedding: 查询嵌入向量.
+            initial_results: 外部已完成的 Round-1 检索结果 (避免重复跑一遍完全相同的混合检索).
+            filter_expr: Milvus 标量过滤表达式 — 传给所有子查询, 避免丢失用户过滤条件.
 
         Returns:
             合并后的检索结果 (原始 + 多跳补充).
         """
         # Round 1: 标准检索
-        results = self._retriever.search(query, query_embedding)
+        if initial_results is not None:
+            results = initial_results
+        elif filter_expr:
+            results = self._retriever.search(query, query_embedding, filter_expr=filter_expr)
+        else:
+            results = self._retriever.search(query, query_embedding)
         total_results = len(results)
         logger.info(
             "多跳检索 Round 1: %d 条结果 (query=%s)",
@@ -215,7 +224,12 @@ class MultiHopRetriever:
 
             for sub_q, sub_embed in zip(sub_queries, sub_embeds):
                 try:
-                    sub_results = self._retriever.search(sub_q, sub_embed)
+                    if filter_expr:
+                        sub_results = self._retriever.search(
+                            sub_q, sub_embed, filter_expr=filter_expr,
+                        )
+                    else:
+                        sub_results = self._retriever.search(sub_q, sub_embed)
                     for r in sub_results:
                         r._source_tag = "multi_hop"
                         r._sub_query = sub_q[:80]

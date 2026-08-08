@@ -82,32 +82,46 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """按 IP 的滑动窗口限流 — 仅作用于 LLM 相关端点 (/ask, /search)."""
+    """按 IP 的滑动窗口限流 — LLM 端点 (/ask, /search) + 管理后台登录防暴力破解."""
 
-    def __init__(self, app, rpm: int | None = None, enabled: bool | None = None):
+    def __init__(
+        self,
+        app,
+        rpm: int | None = None,
+        enabled: bool | None = None,
+    ):
         super().__init__(app)
         self._enabled = settings.rate_limit_enabled if enabled is None else enabled
         self._rpm = settings.rate_limit_rpm if rpm is None else rpm
+        self._login_rpm = settings.login_rate_limit_rpm  # 登录防暴力破解 (0=禁用)
         self._window = 60.0
         self._hits: dict[str, list[float]] = {}
+        self._login_hits: dict[str, list[float]] = {}
         self._lock = threading.Lock()
 
     async def dispatch(self, request: Request, call_next):
-        if not self._enabled:
-            return await call_next(request)
         path = request.url.path
-        if not (path.startswith("/api/v1/ask") or path.startswith("/api/v1/search")):
+        is_login = path.startswith("/api/v1/admin/login")
+        is_llm = path.startswith("/api/v1/ask") or path.startswith("/api/v1/search")
+        # 通用限流可关; 登录防暴力破解独立开启 (login_rate_limit_rpm>0 时始终生效)
+        if not (is_login or is_llm):
+            return await call_next(request)
+        if is_llm and not self._enabled:
+            return await call_next(request)
+        if is_login and self._login_rpm <= 0:
             return await call_next(request)
 
         client = request.client.host if request.client else "unknown"
         now = time.monotonic()
         with self._lock:
-            times = [t for t in self._hits.get(client, []) if now - t < self._window]
-            if len(times) >= self._rpm:
+            bucket = self._login_hits if is_login else self._hits
+            limit = self._login_rpm if is_login else self._rpm
+            times = [t for t in bucket.get(client, []) if now - t < self._window]
+            if len(times) >= limit:
                 return JSONResponse(
                     status_code=429,
                     content={"error": "请求过于频繁，请稍后重试"},
                 )
             times.append(now)
-            self._hits[client] = times
+            bucket[client] = times
         return await call_next(request)

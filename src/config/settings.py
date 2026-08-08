@@ -133,6 +133,7 @@ class Settings(BaseSettings):
     admin_password: str = ""  # 为空时管理后台登录禁用 (默认关闭, 避免硬编码弱口令)
     admin_session_secret: str = ""  # 为空时进程内随机生成 (多 worker 部署必须显式配置)
     admin_session_ttl_hours: int = 12
+    admin_cookie_secure: bool = False  # HTTPS 生产环境建议设为 true
     # 允许跨域来源 (JSON 数组); 为空时不启用 CORS (仅同源/反向代理访问)
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"]
@@ -141,6 +142,8 @@ class Settings(BaseSettings):
     # ── 速率限制 ──
     rate_limit_enabled: bool = False  # 为 True 时对 /ask /search 按 IP 限流
     rate_limit_rpm: int = 60  # 每 IP 每分钟请求上限 (LLM 相关端点)
+    # 管理后台登录防暴力破解: 独立于通用限流, 默认开启 (0=禁用)
+    login_rate_limit_rpm: int = 20  # 每 IP 每分钟登录尝试上限
 
     # ── RAG 检索参数 (可调优, 建议用 tests/eval 评测集回归验证) ──
     # RRF 融合 Dense/BM25 各自的 k 值: k 越小该路排名贡献越大

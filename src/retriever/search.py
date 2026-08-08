@@ -116,6 +116,7 @@ class HybridRetriever:
         query: str,
         query_embedding: np.ndarray,
         filter_expr: str | None = None,
+        final_top_k: int | None = None,
     ) -> list[RetrievalResult]:
         """执行混合检索.
 
@@ -123,10 +124,12 @@ class HybridRetriever:
             query: 原始查询文本.
             query_embedding: 查询的向量嵌入 (1024-dim float32).
             filter_expr: Milvus 标量过滤表达式, 如 'release == "R18" && doc_type == "3gpp"'.
+            final_top_k: 返回条数覆盖值 (None 用实例默认), 避免调用方临时改共享状态.
 
         Returns:
             按 RRF 融合排序的检索结果.
         """
+        k = self._final_top_k if final_top_k is None else final_top_k
         if self._store.supports_bm25 and hasattr(self._store, "hybrid_search"):
             # Milvus 原生混合检索
             results = self._store.hybrid_search(
@@ -134,7 +137,7 @@ class HybridRetriever:
                 query_text=query,
                 dense_top_k=self._dense_top_k,
                 sparse_top_k=self._sparse_top_k,
-                final_top_k=self._final_top_k,
+                final_top_k=k,
                 filter_expr=filter_expr,
             )
         else:
@@ -142,7 +145,7 @@ class HybridRetriever:
             logger.warning("向量库不支持 BM25，降级为纯 Dense 检索")
             results = self._store.search_dense(
                 query_embedding=query_embedding,
-                top_k=self._final_top_k,
+                top_k=k,
                 filter_expr=filter_expr,
             )
 

@@ -1,5 +1,7 @@
 """planner.py 单元测试 — 查询扩展缓存/跳过规则/批量嵌入."""
 
+import threading
+
 import numpy as np
 from cachetools import TTLCache
 
@@ -14,6 +16,7 @@ def _make_planner() -> RetrievalPlanner:
     """轻量构造 — 绕过完整初始化 (避免加载 xref graph/模型)."""
     planner = object.__new__(RetrievalPlanner)
     planner._expand_cache = TTLCache(maxsize=16, ttl=3600)
+    planner._expand_lock = threading.Lock()
     planner._llm = None
     return planner
 

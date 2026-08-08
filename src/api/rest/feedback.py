@@ -7,9 +7,10 @@ import logging
 import sqlite3
 import time
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from src.api.auth import require_admin
 from src.config import settings
 
 logger = logging.getLogger(__name__)
@@ -111,8 +112,9 @@ async def list_feedback(
     rating: str | None = Query(None, pattern=r"^(up|down)$"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    _admin=Depends(require_admin),
 ) -> list[FeedbackItem]:
-    """查询反馈列表（管理用）."""
+    """查询反馈列表（管理后台专用, 需登录会话）."""
     conn = _get_conn()
     where = ""
     params: list = []
@@ -139,8 +141,8 @@ async def list_feedback(
 
 
 @router.get("/feedback/stats", response_model=FeedbackStats)
-async def feedback_stats() -> FeedbackStats:
-    """反馈统计."""
+async def feedback_stats(_admin=Depends(require_admin)) -> FeedbackStats:
+    """反馈统计（管理后台专用, 需登录会话）."""
     conn = _get_conn()
     total = conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0]
     up = conn.execute("SELECT COUNT(*) FROM feedback WHERE rating='up'").fetchone()[0]

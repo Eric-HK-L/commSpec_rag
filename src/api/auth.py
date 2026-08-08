@@ -86,13 +86,18 @@ def _verify_session(token: str) -> str | None:
 
 
 def create_admin_session(response: Response, username: str) -> None:
-    """在响应上写入 httpOnly 会话 Cookie."""
+    """在响应上写入 httpOnly 会话 Cookie.
+
+    生产环境 (HTTPS) 应设置 ADMIN_COOKIE_SECURE=true; Secure 标记会
+    使本地 http://localhost 开发环境无法登录, 故默认关闭。
+    """
     ttl = settings.admin_session_ttl_hours * 3600
     response.set_cookie(
         ADMIN_SESSION_COOKIE,
         _sign_session(username, int(time.time()) + ttl),
         max_age=ttl,
         httponly=True,
+        secure=settings.admin_cookie_secure,
         samesite="lax",
         path="/",
     )

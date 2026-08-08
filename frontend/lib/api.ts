@@ -163,12 +163,33 @@ export interface FeedbackStats {
 
 // ── API 调用 ──
 
-async function apiGet<T>(path: string, params?: Record<string, string>): Promise<T> {
+/** 管理页会话失效 (401) 时跳转登录页 — 中间件只校验 cookie 存在,
+ *  签名过期/服务重启后旧会话会在 API 层返回 401, 这里自动引导重新登录. */
+function handleUnauthorized(): void {
+  if (typeof window === "undefined") return;
+  if (!window.location.pathname.startsWith("/admin")) return;
+  if (window.location.pathname.startsWith("/admin/login")) return;
+  const from = encodeURIComponent(
+    window.location.pathname + window.location.search
+  );
+  window.location.href = `/admin/login?from=${from}`;
+}
+
+async function apiGet<T>(
+  path: string,
+  params?: Record<string, string>
+): Promise<T> {
   const url = new URL(`${API_URL}${path}`, window.location.origin);
   if (params) {
-    Object.entries(params).forEach(([k, v]) => { if (v) url.searchParams.set(k, v); });
+    Object.entries(params).forEach(([k, v]) => {
+      if (v) url.searchParams.set(k, v);
+    });
   }
   const res = await fetch(url.toString());
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error(`API 401: 登录已过期，请重新登录`);
+  }
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
   const json = await res.json();
   // 兼容两种响应格式: 带 APIResponse 包装 (有 success 字段) vs 直接返回数据
@@ -185,6 +206,10 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error(`API 401: 登录已过期，请重新登录`);
+  }
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
   const json = await res.json();
   // 兼容两种响应格式: 带 APIResponse 包装 (有 success 字段) vs 直接返回数据
@@ -199,12 +224,29 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
 
 /** 语义搜索 */
 export async function search(query: string, topK = 10) {
-  return apiPost<{ query: string; total: number; results: SearchResult[] }>("/search", { query, top_k: topK });
+  return apiPost<{ query: string; total: number; results: SearchResult[] }>(
+    "/search",
+    { query, top_k: topK }
+  );
 }
 
 /** RAG 问答 */
-export async function ask(query: string, topK = 10, release?: string, series?: string, docType?: string, rerankerEnabled = true) {
-  return apiPost<AskResponse>("/ask", { query, top_k: topK, release, series, doc_type: docType, reranker_enabled: rerankerEnabled });
+export async function ask(
+  query: string,
+  topK = 10,
+  release?: string,
+  series?: string,
+  docType?: string,
+  rerankerEnabled = true
+) {
+  return apiPost<AskResponse>("/ask", {
+    query,
+    top_k: topK,
+    release,
+    series,
+    doc_type: docType,
+    reranker_enabled: rerankerEnabled,
+  });
 }
 
 /** SSE 流式问答 — 返回 fetch Response 供 ReadableStream 消费 */
@@ -216,7 +258,7 @@ export function askStream(
   docType?: string,
   rerankerEnabled = true,
   history?: { role: string; content: string }[],
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ) {
   return fetch(`${API_URL}/ask/stream`, {
     method: "POST",
@@ -235,7 +277,12 @@ export function askStream(
 }
 
 /** 文档列表 */
-export async function getDocuments(offset = 0, limit = 50, series?: string, release?: string) {
+export async function getDocuments(
+  offset = 0,
+  limit = 50,
+  series?: string,
+  release?: string
+) {
   const params: Record<string, string> = {
     offset: String(offset),
     limit: String(limit),
@@ -264,16 +311,20 @@ export async function getStats() {
 }
 
 /** 批量检索 */
-export async function searchBatch(queries: { query: string; top_k?: number }[]) {
+export async function searchBatch(
+  queries: { query: string; top_k?: number }[]
+) {
   return apiPost<{ query: string; total: number; results: SearchResult[] }[]>(
     "/search/batch",
-    { queries: queries.map(q => ({ query: q.query, top_k: q.top_k || 5 })) }
+    { queries: queries.map((q) => ({ query: q.query, top_k: q.top_k || 5 })) }
   );
 }
 
 /** 健康检查 */
 export async function healthCheck() {
-  return apiGet<{ status: string; vector_db: string; chunk_count: number }>("/health");
+  return apiGet<{ status: string; vector_db: string; chunk_count: number }>(
+    "/health"
+  );
 }
 
 // ── 管理 API ──
@@ -286,18 +337,21 @@ export async function getAdminStats() {
 /** 触发摄入 */
 export async function triggerIngestion(
   mode: "incremental" | "full" = "incremental",
-  source: "marked" | "original" | "all" = "marked",
+  source: "marked" | "original" | "all" = "marked"
 ) {
-  return apiPost<{ accepted: boolean; message: string; mode: string; pid: number | null }>(
-    `/admin/ingest/trigger?mode=${mode}&source=${source}`, {}
-  );
+  return apiPost<{
+    accepted: boolean;
+    message: string;
+    mode: string;
+    pid: number | null;
+  }>(`/admin/ingest/trigger?mode=${mode}&source=${source}`, {});
 }
 
 /** 上传文档 (自动归类: markdown→marked/, 其他→original/, 非3GPP/O-RAN→other/) */
 export async function uploadDocument(
   file: File,
   category?: "marked" | "original" | "other",
-  release?: string,
+  release?: string
 ) {
   const form = new FormData();
   form.append("file", file);
@@ -305,12 +359,18 @@ export async function uploadDocument(
   if (category) params.set("category", category);
   if (release) params.set("release", release);
   const qs = params.toString();
-  const res = await fetch(`${API_URL}/admin/documents/upload${qs ? `?${qs}` : ""}`, {
-    method: "POST",
-    body: form,
-  });
+  const res = await fetch(
+    `${API_URL}/admin/documents/upload${qs ? `?${qs}` : ""}`,
+    {
+      method: "POST",
+      body: form,
+    }
+  );
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { detail?: string }).detail || `API ${res.status}`);
+  if (!res.ok)
+    throw new Error(
+      (data as { detail?: string }).detail || `API ${res.status}`
+    );
   return data as {
     data: {
       filename: string;
@@ -340,13 +400,20 @@ export async function getManifest() {
 
 /** 删除 manifest 记录 */
 export async function deleteManifestRecord(key: string) {
-  const res = await fetch(`${API_URL}/admin/manifest/${encodeURIComponent(key)}`, {
-    method: "DELETE",
-  });
+  const res = await fetch(
+    `${API_URL}/admin/manifest/${encodeURIComponent(key)}`,
+    {
+      method: "DELETE",
+    }
+  );
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
   const json = await res.json();
   if (!json.success && json.error) throw new Error(json.error);
-  return json.data as { deleted_key: string; spec_number: string; release: string };
+  return json.data as {
+    deleted_key: string;
+    spec_number: string;
+    release: string;
+  };
 }
 
 /** 系统日志 */
@@ -396,7 +463,10 @@ export async function getFeedbackStats() {
 
 /** 反馈列表 */
 export async function getFeedbackList(rating?: string, limit = 50, offset = 0) {
-  const params: Record<string, string> = { limit: String(limit), offset: String(offset) };
+  const params: Record<string, string> = {
+    limit: String(limit),
+    offset: String(offset),
+  };
   if (rating) params.rating = rating;
   return apiGet<FeedbackItem[]>("/feedback", params);
 }

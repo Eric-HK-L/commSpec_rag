@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from src.config import settings
+from src.retriever.milvus_store import _escape_milvus_expr
 from src.retriever.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -156,7 +157,11 @@ class IncrementalIndexer:
             key = self._file_key(fp)
             old_entry = self._state.get(key)
             if old_entry:
-                self._store.delete_by_filter(f'spec_number == "{old_entry.spec_number}"')
+                # 必须带 release, 否则会误删同规范的其他版本 chunk
+                self._store.delete_by_filter(
+                    f'spec_number == "{_escape_milvus_expr(old_entry.spec_number)}"'
+                    f' && release == "{_escape_milvus_expr(old_entry.release)}"'
+                )
                 stats["deleted"] += old_entry.chunk_count
 
             # 重新处理 (同新增逻辑)
@@ -185,7 +190,11 @@ class IncrementalIndexer:
         for key in deleted_files:
             entry = self._state.pop(key, None)
             if entry:
-                self._store.delete_by_filter(f'spec_number == "{entry.spec_number}"')
+                # 必须带 release, 否则会误删同规范的其他版本 chunk
+                self._store.delete_by_filter(
+                    f'spec_number == "{_escape_milvus_expr(entry.spec_number)}"'
+                    f' && release == "{_escape_milvus_expr(entry.release)}"'
+                )
                 stats["deleted"] += entry.chunk_count
 
         self.save_state()

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
 import time
 from dataclasses import dataclass
 
@@ -102,6 +103,8 @@ class RAGPipeline:
         self._verifier = AnswerVerifier()
         # 查询级 LRU 缓存: TTL 1 小时, 最多 256 条, key=md5(query)
         self._query_cache: TTLCache = TTLCache(maxsize=256, ttl=3600)
+        # TTLCache 非线程安全 — /ask (事件循环线程) 与 /ask/stream (后台线程) 并发访问
+        self._cache_lock = threading.Lock()
 
     def ask(
         self, query: str, reranker_enabled: bool = True,
@@ -129,7 +132,8 @@ class RAGPipeline:
             reranker_enabled=reranker_enabled,
             history=history,
         )
-        cached = self._query_cache.get(cache_key)
+        with self._cache_lock:
+            cached = self._query_cache.get(cache_key)
         if cached is not None:
             logger.info("查询缓存命中: %s", query[:80])
             return cached
@@ -208,7 +212,8 @@ class RAGPipeline:
         )
 
         # 存入查询缓存
-        self._query_cache[cache_key] = response
+        with self._cache_lock:
+            self._query_cache[cache_key] = response
         return response
 
     def _retrieve_context(
@@ -252,7 +257,8 @@ class RAGPipeline:
             reranker_enabled=reranker_enabled,
             history=history,
         )
-        cached = self._query_cache.get(cache_key)
+        with self._cache_lock:
+            cached = self._query_cache.get(cache_key)
         if cached is not None:
             logger.info("查询缓存命中(流式): %s", query[:80])
             yield ("sources", cached.sources)
@@ -352,7 +358,8 @@ class RAGPipeline:
             coverage=verification["coverage"],
             expanded_query=expanded_query,
         )
-        self._query_cache[cache_key] = response
+        with self._cache_lock:
+            self._query_cache[cache_key] = response
         yield ("done", {
             "answer": answer,
             "verified": verification["verified"],

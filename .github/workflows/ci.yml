@@ -19,7 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        # 3.13 无 torch==2.5.1 / numpy==1.26.4 / pandas==2.2.3 的 cp313 wheel, 会必红
+        python-version: ["3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4

@@ -154,9 +154,10 @@ class MCPToolHandler:
 
         # 通过 Milvus query 按 spec_number 过滤 (替代已删除的 FAISS _id_to_meta)
         try:
-            expr = f'spec_number == "{spec_number}"'
+            from src.retriever.milvus_store import _escape_milvus_expr
+            expr = f"spec_number == '{_escape_milvus_expr(spec_number)}'"
             if section_id:
-                expr += f' and parent_section_id == "{section_id}"'
+                expr += f" and parent_section_id == '{_escape_milvus_expr(section_id)}'"
 
             raw = store._collection.query(
                 expr=expr,

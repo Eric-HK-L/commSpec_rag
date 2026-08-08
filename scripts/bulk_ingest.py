@@ -29,12 +29,15 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Callable
+
+import numpy as np
 
 # 项目根目录
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.config import settings, ingestion_config  # noqa: E402
+from src.config import ingestion_config, settings  # noqa: E402
 from src.ingestion.embedder import BatchEmbedder  # noqa: E402
 from src.ingestion.embedding_cache import EmbeddingCache  # noqa: E402
 from src.ingestion.extractor import MarkdownSourceExtractor, PandocExtractor  # noqa: E402
@@ -506,7 +509,6 @@ def _embed_via_subprocess(texts: list[str]) -> "np.ndarray":
     流程: 文本写入临时 pickle → subprocess 独立嵌入 → 读回 .npy。
     超时动态计算: 按保守 30 t/s + 600s 模型加载余量, 随数据规模自适应。
     """
-    import numpy as np
     import threading
 
     script = PROJECT_ROOT / "scripts" / "_mps_embed_subprocess.py"
@@ -636,7 +638,9 @@ def embed_and_insert(
         start = seg_idx * segment_size
         end = min(start + segment_size, total)
         seg_texts = [
-            f"{c.section_title} {c.section_path} {c.text[:500]}" if c.section_path else c.text
+            # 用全文嵌入 (splitter 已按 BGE-M3 8192 token 安全上限拆分),
+            # 截断到 500 字会导致 500 字后的内容对检索零贡献
+            f"{c.section_title} {c.section_path} {c.text}" if c.section_path else c.text
             for c in all_chunks[start:end]
         ]
         seg_count = len(seg_texts)

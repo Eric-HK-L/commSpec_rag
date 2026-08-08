@@ -108,10 +108,14 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.frontend
+      args:
+        # next.config.ts 的 rewrites 在构建期把 BACKEND_URL 烘焙进 standalone 产物
+        BACKEND_URL: http://api:8000
     image: commspec-rag-frontend:latest
     ports:
       - "3000:3000"
     environment:
+      # 运行时环境变量 (next.config.ts 构建期已烘焙, 运行时仅供其他引用点使用)
       - NEXT_PUBLIC_API_URL=http://api:8000/api/v1
     depends_on:
       api:

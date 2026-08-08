@@ -99,7 +99,6 @@ class XrefGraphBuilder:
         self._doc_to_spec: dict[str, str] = {}
         self._doc_chunks: dict[str, list[dict]] = defaultdict(list)
         self._references_sections: dict[str, str] = {}
-        self._ie_names_by_spec: dict[str, set[str]] = defaultdict(set)
 
     # ═══════════════════════════════════════════════════════════════════
     # 公共接口
@@ -143,7 +142,6 @@ class XrefGraphBuilder:
         self._doc_to_spec = {}
         self._doc_chunks = defaultdict(list)
         self._references_sections = {}
-        self._ie_names_by_spec = defaultdict(set)
 
     def _serialize(self) -> dict:
         """序列化为 JSON 结构."""
@@ -225,7 +223,6 @@ class XrefGraphBuilder:
                         self._section_index[pk].append(str(chunk_id))
 
         logger.info("  节点: %d, 索引 entries: %d", len(self._nodes), len(self._section_index))
-        self._extract_ie_names()
 
     def _load_all_chunks(self) -> list[dict]:
         """从 Milvus 游标分页读取全部 chunk 数据。"""
@@ -633,19 +630,6 @@ class XrefGraphBuilder:
     # ═══════════════════════════════════════════════════════════════════
     # 阶段 4: IE 定义提取 (DEFINES)
     # ═══════════════════════════════════════════════════════════════════
-
-    def _extract_ie_names(self) -> None:
-        """离线提取每个 spec 的 ASN.1 IE 名字集合。"""
-        for node in self._nodes:
-            spec = node.get("spec", "")
-            if not spec:
-                continue
-            text = node.get("text", "")
-            for m in _ASN1_PATTERN.finditer(text):
-                name = m.group(1)
-                if len(name) < 3 or name.lower() in _IE_GENERIC_NAMES:
-                    continue
-                self._ie_names_by_spec[spec].add(name)
 
     def _stage4_ie_defines(self) -> None:
         """提取 ASN.1 IE 定义，生成 DEFINES 边 + IE 节点。"""

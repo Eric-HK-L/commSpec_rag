@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import threading
 import time as _time
@@ -122,6 +123,12 @@ async def lifespan(app: FastAPI):
     _validate_online_search_config()
     # ── Task 8: 嵌入缓存状态 ──
     _log_embedding_cache_status()
+    # ── Task 13: API Key 认证状态 ──
+    if not os.getenv("API_KEYS", "").strip():
+        logger.warning(
+            "⚠️ 未配置 API_KEYS — 所有 API 端点将免认证放行。"
+            "生产环境必须设置 API_KEYS (逗号分隔), 否则任何人可调用 /ask、/search、/documents 等端点。"
+        )
 
     _store = init_vector_store()
     try:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import pickle
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -35,6 +36,8 @@ class BM25Indexer:
         self._meta: list[dict] = []
         # 原始文本（用于调试/显示）
         self._texts: list[str] = []
+        # BM25 索引非线程安全 — build/load/重建 与并发检索需互斥
+        self._lock = threading.RLock()
 
     # ── 索引构建 ──
 
@@ -64,21 +67,22 @@ class BM25Indexer:
 
         logger.info("开始构建 BM25 索引, 语料量: %d 条", n)
 
-        # 生成文档唯一键
-        self._doc_keys = [
-            f"{doc_ids[i]}|{spec_numbers[i]}|{chunk_indices[i]}"
-            for i in range(n)
-        ]
-        self._meta = list(metadata) if metadata is not None else [{} for _ in range(n)]
-        self._texts = texts
+        with self._lock:
+            # 生成文档唯一键
+            self._doc_keys = [
+                f"{doc_ids[i]}|{spec_numbers[i]}|{chunk_indices[i]}"
+                for i in range(n)
+            ]
+            self._meta = list(metadata) if metadata is not None else [{} for _ in range(n)]
+            self._texts = texts
 
-        # 分词
-        tokenized = [self._tokenize(t) for t in texts]
+            # 分词
+            tokenized = [self._tokenize(t) for t in texts]
 
-        # 构建 BM25Okapi 索引
-        self._bm25 = BM25Okapi(tokenized)
-        logger.info("BM25 索引构建完成 (%d 条, 词表约 %d 词)",
-                     n, len(self._bm25.idf) if self._bm25 else 0)
+            # 构建 BM25Okapi 索引
+            self._bm25 = BM25Okapi(tokenized)
+            logger.info("BM25 索引构建完成 (%d 条, 词表约 %d 词)",
+                         n, len(self._bm25.idf) if self._bm25 else 0)
 
     @staticmethod
     def _tokenize(text: str) -> list[str]:
@@ -99,33 +103,34 @@ class BM25Indexer:
         Returns:
             [(doc_key, bm25_score, text), ...] 列表。
         """
-        if self._bm25 is None or not self._doc_keys:
-            return []
+        with self._lock:
+            if self._bm25 is None or not self._doc_keys:
+                return []
 
-        tokenized = self._tokenize(query)
-        if not tokenized:
-            return []
+            tokenized = self._tokenize(query)
+            if not tokenized:
+                return []
 
-        scores = self._bm25.get_scores(tokenized)
-        if len(scores) == 0:
-            return []
+            scores = self._bm25.get_scores(tokenized)
+            if len(scores) == 0:
+                return []
 
-        # 获取 top-k 索引
-        limit = min(top_k, len(scores))
-        top_indices = np.argsort(scores)[::-1][:limit]
+            # 获取 top-k 索引
+            limit = min(top_k, len(scores))
+            top_indices = np.argsort(scores)[::-1][:limit]
 
-        results: list[tuple[str, float, str]] = []
-        for idx in top_indices:
-            score = float(scores[idx])
-            if score <= 0:
-                continue
-            results.append((
-                self._doc_keys[idx],
-                score,
-                self._texts[idx] if idx < len(self._texts) else "",
-            ))
+            results: list[tuple[str, float, str]] = []
+            for idx in top_indices:
+                score = float(scores[idx])
+                if score <= 0:
+                    continue
+                results.append((
+                    self._doc_keys[idx],
+                    score,
+                    self._texts[idx] if idx < len(self._texts) else "",
+                ))
 
-        return results
+            return results
 
     def search_with_meta(
         self, query: str, top_k: int = 100
@@ -136,29 +141,34 @@ class BM25Indexer:
             [(doc_key, bm25_score, text, meta), ...] 列表.
         """
         results = self.search(query, top_k)
+        # _meta 与 _doc_keys 等长且按下标对应; 检索结果是按分数排序的,
+        # 必须用 doc_key 反查元数据, 否则过滤 (release/series/doc_type) 会错位
+        with self._lock:
+            key_to_idx = {key: i for i, key in enumerate(self._doc_keys)}
         return [
-            (doc_key, score, text, self._meta[i] if i < len(self._meta) else {})
-            for i, (doc_key, score, text) in enumerate(results)
+            (doc_key, score, text, self._meta[key_to_idx[doc_key]] if doc_key in key_to_idx else {})
+            for doc_key, score, text in results
         ]
 
     # ── 持久化 ──
 
     def save(self) -> None:
         """保存 BM25 索引到磁盘 (pickle)。"""
-        if self._bm25 is None:
-            return
-        self._index_path.parent.mkdir(parents=True, exist_ok=True)
-        data = {
-            "bm25": self._bm25,
-            "doc_keys": self._doc_keys,
-            "texts": self._texts,
-            "meta": self._meta,
-        }
-        with open(self._index_path, "wb") as f:
-            pickle.dump(data, f)
-        logger.info("BM25 索引已保存: %s (%.1f MB)",
-                     self._index_path,
-                     self._index_path.stat().st_size / (1024 * 1024))
+        with self._lock:
+            if self._bm25 is None:
+                return
+            self._index_path.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "bm25": self._bm25,
+                "doc_keys": self._doc_keys,
+                "texts": self._texts,
+                "meta": self._meta,
+            }
+            with open(self._index_path, "wb") as f:
+                pickle.dump(data, f)
+            logger.info("BM25 索引已保存: %s (%.1f MB)",
+                         self._index_path,
+                         self._index_path.stat().st_size / (1024 * 1024))
 
     def load(self) -> bool:
         """从磁盘加载 BM25 索引。
@@ -166,16 +176,17 @@ class BM25Indexer:
         Returns:
             True 如果加载成功。
         """
-        if not self._index_path.exists():
-            return False
-        with open(self._index_path, "rb") as f:
-            data = pickle.load(f)
-        self._bm25 = data["bm25"]
-        self._doc_keys = data["doc_keys"]
-        self._texts = data.get("texts", [])
-        self._meta = data.get("meta", [{}] * len(self._doc_keys))
-        logger.info("BM25 索引加载成功: %d 条", len(self._doc_keys))
-        return True
+        with self._lock:
+            if not self._index_path.exists():
+                return False
+            with open(self._index_path, "rb") as f:
+                data = pickle.load(f)
+            self._bm25 = data["bm25"]
+            self._doc_keys = data["doc_keys"]
+            self._texts = data.get("texts", [])
+            self._meta = data.get("meta", [{}] * len(self._doc_keys))
+            logger.info("BM25 索引加载成功: %d 条", len(self._doc_keys))
+            return True
 
     # ── 属性 ──
 

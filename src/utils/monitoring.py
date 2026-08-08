@@ -10,7 +10,6 @@ from fastapi import Request, Response
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     Counter,
-    Gauge,
     Histogram,
     generate_latest,
 )
@@ -82,9 +81,10 @@ rag_retrieval_results_count = Histogram(
     buckets=(1, 3, 5, 10, 20, 50),
 )
 
-rag_retrieval_avg_score = Gauge(
+rag_retrieval_avg_score = Histogram(
     "rag_retrieval_avg_score",
-    "Average retrieval score of top-k results",
+    "Distribution of average retrieval score of top-k results",
+    buckets=(0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, float("inf")),
 )
 
 # 交叉引用 & 多跳
@@ -177,7 +177,7 @@ def record_search(results_count: int, avg_score: float, duration_s: float, succe
     rag_search_total.labels(status=status).inc()
     rag_search_duration_seconds.observe(duration_s)
     rag_retrieval_results_count.observe(results_count)
-    rag_retrieval_avg_score.set(avg_score)
+    rag_retrieval_avg_score.observe(avg_score)
 
 
 def record_ask(duration_s: float, success: bool = True):

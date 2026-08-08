@@ -58,10 +58,6 @@ _RE_SPEC_WITH_VERSION = re.compile(
     re.IGNORECASE,
 )
 
-# 最大引用递归深度（防止无限二次检索）
-MAX_REF_DEPTH = 2
-
-
 @dataclass
 class SpecRef:
     """结构化的 3GPP 规范引用."""
@@ -175,81 +171,6 @@ def _deduplicate_refs(refs: list[SpecRef]) -> list[SpecRef]:
             seen.add(key)
             unique.append(r)
     return unique
-
-
-def resolve_cross_refs(
-    chunks: list[RetrievalResult],
-    retriever=None,
-    top_k: int = 5,
-    depth: int = 0,
-) -> list[RetrievalResult]:
-    """从检索结果中提取交叉引用并补充上下文.
-
-    流程:
-    1. 扫描每个 chunk 中的引用
-    2. 去重（同一 spec+clause 只查一次）
-    3. 对每个引用发起二次检索
-    4. 追加命中结果到原始 context
-
-    Args:
-        chunks: 原始检索结果
-        retriever: 检索器实例 (需要实现 search() 方法). 为 None 时跳过二次检索.
-        top_k: 每个引用的二次检索 Top-K
-        depth: 当前递归深度 (防止无限循环)
-
-    Returns:
-        原始结果 + 二次检索补充结果（标注 source='cross_ref'）
-    """
-    if depth >= MAX_REF_DEPTH:
-        return list(chunks)
-
-    # 1. 提取并去重
-    all_refs: list[SpecRef] = []
-    for chunk in chunks:
-        all_refs.extend(extract_references(chunk.text))
-    unique_refs = _deduplicate_refs(all_refs)
-
-    if not unique_refs:
-        logger.debug("交叉引用解析: 未发现有效引用")
-        return list(chunks)
-
-    logger.info(
-        "交叉引用解析: 发现 %d 个引用 → %d 个去重后",
-        len(all_refs), len(unique_refs),
-    )
-
-    # 2. 跳过不可靠引用（无 spec_number）
-    concrete_refs = [r for r in unique_refs if r.spec_number != "?"]
-    if not concrete_refs:
-        return list(chunks)
-
-    # 3. 二次检索
-    supplement: list[RetrievalResult] = []
-    if retriever is not None:
-        for ref in concrete_refs:
-            query = ref.to_search_query()
-            try:
-                results = retriever.search(query, top_k=top_k)
-                # 标注来源
-                for r in results:
-                    r._source_tag = "cross_ref"
-                    r._ref_from = ref.raw_text
-                supplement.extend(results)
-                logger.debug("  二次检索 [%s] → %d 条", ref.lookup_key, len(results))
-            except Exception as e:
-                logger.warning("二次检索失败 [%s]: %s", ref.lookup_key, e)
-    else:
-        logger.info("未提供检索器, 跳过二次检索 (仅提取引用)")
-
-    # 4. 合并：原始 → 补充（去重）
-    merged = list(chunks)
-    seen_ids = {str(c.chunk_id) for c in merged}  # 统一 str 避免 int/str 混合
-    for r in supplement:
-        if str(r.chunk_id) not in seen_ids:
-            seen_ids.add(str(r.chunk_id))
-            merged.append(r)
-
-    return merged
 
 
 def get_ref_summary(chunks: list[RetrievalResult]) -> dict[str, list[str]]:

@@ -51,10 +51,10 @@ class PaginationMeta(BaseModel):
 
 class SearchFilters(BaseModel):
     """检索过滤条件."""
-    series: str | None = Field(default=None, description="规范系列号, 如 '38'")
-    release: str | None = Field(default=None, description="Release, 如 'R18'")
+    series: str | None = Field(default=None, pattern=r"^[0-9]*$", description="规范系列号, 如 '38'")
+    release: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._-]*$", description="Release, 如 'R18'")
     spec_number: str | None = Field(default=None, description="规范编号, 如 '38.300'")
-    doc_type: str | None = Field(default=None, description="文档类型, '3gpp' 或 'oran'")
+    doc_type: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._-]*$", description="文档类型, '3gpp' 或 'oran'")
 
 
 # ── 排序 ──
