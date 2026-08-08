@@ -142,6 +142,16 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = False  # 为 True 时对 /ask /search 按 IP 限流
     rate_limit_rpm: int = 60  # 每 IP 每分钟请求上限 (LLM 相关端点)
 
+    # ── RAG 检索参数 (可调优, 建议用 tests/eval 评测集回归验证) ──
+    # RRF 融合 Dense/BM25 各自的 k 值: k 越小该路排名贡献越大
+    rrf_k_dense: int = 60
+    rrf_k_sparse: int = 60
+    # 查询扩展: 关闭则直接使用原始查询检索 (省一次 LLM 调用)
+    query_expansion_enabled: bool = True
+    # 多跳检索预算: 控制 LLM 缺口分析轮次与每轮子查询数
+    multi_hop_max_rounds: int = 2
+    multi_hop_max_sub_queries: int = 3
+
     # ── 日志 ──
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_file: str = "logs/app.log"

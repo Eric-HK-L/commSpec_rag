@@ -130,7 +130,7 @@ class MultiHopRetriever:
     """多跳检索器 — 迭代 Agent 模式.
 
     用法:
-        mh = MultiHopRetriever(retriever, llm_client, embed_fn)
+        mh = MultiHopRetriever(retriever, llm_client, embed_batch_fn)
         results = mh.search(query, query_embedding)
     """
 
@@ -138,15 +138,17 @@ class MultiHopRetriever:
         self,
         retriever,       # HybridRetriever
         llm_client,      # LLMClient
-        embed_fn,        # (str) -> np.ndarray, 嵌入生成函数
+        embed_batch_fn,  # (list[str]) -> list[np.ndarray], 批量嵌入函数
         max_rounds: int = MAX_ROUNDS,
         sub_query_top_k: int = SUB_QUERY_TOP_K,
+        max_sub_queries: int = MAX_SUB_QUERIES,
     ):
         self._retriever = retriever
         self._llm = llm_client
-        self._embed = embed_fn
+        self._embed_batch = embed_batch_fn
         self._max_rounds = max_rounds
         self._sub_top_k = sub_query_top_k
+        self._max_sub_queries = max_sub_queries
 
     def search(
         self,
@@ -195,6 +197,7 @@ class MultiHopRetriever:
             if not sub_queries:
                 logger.debug("多跳检索 Round %d: 无有效子查询", round_idx)
                 break
+            sub_queries = sub_queries[: self._max_sub_queries]
 
             logger.info(
                 "多跳检索 Round %d: %d 个子查询 → %s",
@@ -202,11 +205,16 @@ class MultiHopRetriever:
                 [q[:40] for q in sub_queries],
             )
 
-            # 并行二次检索
+            # 批量嵌入子查询 (一次模型推理替代多次, 省延迟)
             round_supplement: list[RetrievalResult] = []
-            for sub_q in sub_queries:
+            try:
+                sub_embeds = self._embed_batch(sub_queries)
+            except Exception as e:
+                logger.warning("子查询批量嵌入失败: %s", e)
+                break
+
+            for sub_q, sub_embed in zip(sub_queries, sub_embeds):
                 try:
-                    sub_embed = self._embed(sub_q)
                     sub_results = self._retriever.search(sub_q, sub_embed)
                     for r in sub_results:
                         r._source_tag = "multi_hop"

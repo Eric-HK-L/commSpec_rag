@@ -1,6 +1,11 @@
-"""multi_hop.py 单元测试 — 纯函数逻辑."""
+"""multi_hop.py 单元测试 — 纯函数逻辑 + 检索器预算/批量嵌入."""
+
+from unittest.mock import MagicMock
+
+import numpy as np
 
 from src.retriever.multi_hop import (
+    MultiHopRetriever,
     _build_chunk_summary,
     _build_gap_analysis_prompt,
     _merge_results,
@@ -149,3 +154,76 @@ class TestNeedsMultiHop:
 
     def test_empty(self):
         assert needs_multi_hop([]) is False
+
+
+class _FakeRetriever:
+    """模拟 HybridRetriever — 每次检索返回 3 条结果 (满足多跳触发条件)."""
+
+    def __init__(self):
+        self.calls: list[str] = []
+
+    def search(self, query, query_embedding):
+        self.calls.append(query)
+        return [
+            _make_chunk(chunk_id=f"mh-{len(self.calls)}-{i}", spec_number="38.413",
+                        text=f"result {i} for {query}")
+            for i in range(3)
+        ]
+
+
+def _make_embed_batch():
+    calls: list[list[str]] = []
+
+    def embed_batch(texts):
+        calls.append(texts)
+        return [np.full(1024, i, dtype=np.float32) for i in range(len(texts))]
+
+    return embed_batch, calls
+
+
+class TestMultiHopRetriever:
+    """多跳检索器 — 子查询预算与批量嵌入."""
+
+    def _make(self, max_sub_queries=2, gap_response=None):
+        retriever = _FakeRetriever()
+        llm = MagicMock()
+        llm.chat.return_value = gap_response or "\n".join(f"sub query {i}" for i in range(5))
+        embed_batch, embed_calls = _make_embed_batch()
+        mh = MultiHopRetriever(
+            retriever=retriever, llm_client=llm, embed_batch_fn=embed_batch,
+            max_rounds=2, sub_query_top_k=5, max_sub_queries=max_sub_queries,
+        )
+        return mh, retriever, llm, embed_calls
+
+    def test_sub_queries_capped_by_budget(self):
+        mh, retriever, _, _ = self._make(max_sub_queries=2)
+        mh.search("question", np.zeros(1024, dtype=np.float32))
+        # 1 次初始检索 + 仅检索预算内的前 2 个子查询
+        assert retriever.calls == ["question", "sub query 0", "sub query 1"]
+
+    def test_batch_embed_called_once(self):
+        mh, retriever, _, embed_calls = self._make(max_sub_queries=3)
+        mh.search("question", np.zeros(1024, dtype=np.float32))
+        assert len(embed_calls) == 1
+        assert len(embed_calls[0]) == 3  # 三个子查询一次批量嵌入
+
+    def test_sufficient_stops_without_retrieval(self):
+        mh, retriever, llm, embed_calls = self._make(gap_response="SUFFICIENT")
+        mh.search("question", np.zeros(1024, dtype=np.float32))
+        assert retriever.calls == ["question"]  # 仅 Round 1 初始检索
+        assert embed_calls == []
+
+    def test_results_too_few_skips(self):
+        class _EmptyRetriever:
+            def search(self, query, query_embedding):
+                return [_make_chunk(chunk_id="only-one", spec_number="38.413")]
+
+        llm = MagicMock()
+        embed_batch, embed_calls = _make_embed_batch()
+        mh = MultiHopRetriever(
+            retriever=_EmptyRetriever(), llm_client=llm, embed_batch_fn=embed_batch,
+            max_rounds=2, max_sub_queries=3,
+        )
+        results = mh.search("question", np.zeros(1024, dtype=np.float32))
+        assert len(results) == 1
+        llm.chat.assert_not_called()

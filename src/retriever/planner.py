@@ -12,12 +12,14 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import logging
 import re
 import time
 from dataclasses import dataclass, field
 
 import numpy as np
+from cachetools import TTLCache
 
 from src.config import settings
 from src.generator.i18n import detect_language, translate_to_english
@@ -51,6 +53,24 @@ _TRANSLATE_EXPAND_SYSTEM = """你是通信规范查询优化器（3GPP / O-RAN�
 4. 严格输出两行（不要任何解释或空行）：
 TRANSLATED: <英文翻译>
 EXPANDED: <扩展后的英文检索查询>"""
+
+
+_PRECISE_SPEC_RE = re.compile(r"\b\d{2}\.\d{3}\b")
+_PRECISE_SECTION_RE = re.compile(r"§\s*\d+|section\s+\d+", re.IGNORECASE)
+
+
+def _is_precise_query(query: str) -> bool:
+    """查询已含规范号 + 章节引用 → 足够精确, 跳过 LLM 扩展."""
+    return bool(_PRECISE_SPEC_RE.search(query) and _PRECISE_SECTION_RE.search(query))
+
+
+def _history_fingerprint(history: list[dict[str, str]] | None) -> str:
+    """多轮历史指纹 — 用于查询扩展缓存 Key."""
+    if not history:
+        return ""
+    return "|".join(
+        f"{m.get('role', '')}:{m.get('content', '')[:200]}" for m in history[-6:]
+    )
 
 
 @dataclass
@@ -87,7 +107,9 @@ class RetrievalPlanner:
         self._multi_hop = MultiHopRetriever(
             retriever=self._retriever,
             llm_client=self._llm,
-            embed_fn=self._get_query_embedding,
+            embed_batch_fn=self._get_query_embeddings,
+            max_rounds=settings.multi_hop_max_rounds,
+            max_sub_queries=settings.multi_hop_max_sub_queries,
         )
         self._online = OnlineSupplement(
             google_api_key=settings.google_api_key,
@@ -98,6 +120,8 @@ class RetrievalPlanner:
 
         # 离线 Xref Graph 扩展器 (可选加载)
         self._graph_expander: GraphExpander | None = None
+        # 查询扩展结果缓存 (query+history 指纹, TTL 1h)
+        self._expand_cache: TTLCache = TTLCache(maxsize=512, ttl=3600)
         xref_path = settings.data_abs_dir / "processed" / "xref_graph.json"
         if xref_path.exists():
             try:
@@ -314,14 +338,41 @@ class RetrievalPlanner:
     # ── 查询翻译/扩展 ──
 
     def _expand_query(self, query: str, history: list[dict[str, str]] | None = None) -> str:
+        """查询扩展 — 精确查询跳过 + 结果缓存, 减少 LLM 调用."""
+        if not settings.query_expansion_enabled:
+            return query
+        if _is_precise_query(query):
+            logger.debug("查询已含规范号+章节引用, 跳过扩展: %.60s", query)
+            return query
+
+        cache_key = hashlib.sha256(
+            f"{query.lower().strip()}|{_history_fingerprint(history)}".encode()
+        ).hexdigest()
+        cached = self._expand_cache.get(cache_key)
+        if cached is not None:
+            logger.debug("查询扩展缓存命中: %.60s", query)
+            return cached
+
         try:
             messages = build_query_expansion_prompt(query, history)
             expanded = self._llm.chat(messages)
             if expanded and len(expanded) > 5:
+                self._expand_cache[cache_key] = expanded
                 return expanded
         except Exception as e:
             logger.warning("查询扩展失败: %s", e)
         return query
+
+    def _get_query_embeddings(self, texts: list[str]) -> list[np.ndarray]:
+        """批量生成查询嵌入 — 一次模型推理替代逐条调用."""
+        if not texts:
+            return []
+        try:
+            embeddings = self._llm.embed(texts)
+            return [np.array(e, dtype=np.float32) for e in embeddings]
+        except Exception as e:
+            logger.warning("批量嵌入失败, 逐条降级: %s", e)
+            return [self._get_query_embedding(t) for t in texts]
 
     def _translate_and_expand(
         self,
@@ -504,9 +555,9 @@ class RetrievalPlanner:
         seen_ids = {str(r.chunk_id) for r in existing_results}
         supplement: list[RetrievalResult] = []
 
-        for sub_q in sub_queries:
+        sub_embeds = self._get_query_embeddings(sub_queries)
+        for sub_q, sub_embed in zip(sub_queries, sub_embeds):
             try:
-                sub_embed = self._get_query_embedding(sub_q)
                 # 子查询用较小的 top_k, 避免单子查询占据全部上下文
                 old_final = self._retriever._final_top_k
                 self._retriever._final_top_k = max(settings.max_search_results // 2, 5)
@@ -609,10 +660,10 @@ class RetrievalPlanner:
         # 3. 二次检索
         supplement: list[RetrievalResult] = []
         seen_ids = {r.chunk_id for r in results}
-        for ref in concrete_refs:
-            query = ref.to_search_query()
+        ref_queries = [(ref, ref.to_search_query()) for ref in concrete_refs]
+        embeddings = self._get_query_embeddings([q for _, q in ref_queries])
+        for (ref, query), embedding in zip(ref_queries, embeddings):
             try:
-                embedding = self._get_query_embedding(query)
                 ref_results = self._retriever.search(query, embedding)
                 for r in ref_results:
                     if r.chunk_id not in seen_ids:

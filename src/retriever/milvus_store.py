@@ -30,6 +30,38 @@ from .vector_store import Chunk, SearchResult, VectorStore
 
 logger = logging.getLogger(__name__)
 
+
+def _matches_filter_expr(meta: dict, filter_expr: str) -> bool:
+    """用 Milvus 标量过滤表达式匹配单条 chunk 元数据.
+
+    支持 _build_filter_expr 生成的子集:
+      - 原子: `field == "value"` / `field == 38`
+      - 组合: `&&` (AND), `||` (OR)
+    用于 BM25 结果在 Python 侧做同样的过滤.
+    """
+    if not filter_expr:
+        return True
+    if not meta:
+        return False
+
+    def _atom(expr: str) -> bool:
+        expr = expr.strip().strip("()")
+        if "==" not in expr:
+            return False
+        field, _, raw = expr.partition("==")
+        field = field.strip()
+        value = raw.strip().strip('"')
+        actual = meta.get(field)
+        # Milvus 数值字段 (series) 以字符串形式写入 meta 时统一比较
+        return str(actual) == str(value) or actual == value
+
+    # 拆分为 OR 组, 每组内 AND
+    for group in filter_expr.split("||"):
+        atoms = group.split("&&")
+        if all(_atom(a) for a in atoms if a.strip()):
+            return True
+    return False
+
 # Milvus 字段配置
 VARCHAR_MAX = 65000  # 字节级安全边距 (Milvus VARCHAR 硬限 65535 bytes)
 
@@ -306,9 +338,12 @@ class MilvusStore(VectorStore):
         doc_ids: list[str],
         spec_numbers: list[str],
         chunk_indices: list[int],
+        metadata: list[dict] | None = None,
     ) -> None:
         """从完整语料构建 BM25 索引。"""
-        self._bm25.build(texts, doc_ids, spec_numbers, chunk_indices)
+        self._bm25.build(
+            texts, doc_ids, spec_numbers, chunk_indices, metadata=metadata,
+        )
         self._bm25.save()
 
     def rebuild_bm25_from_collection(self) -> int:
@@ -327,6 +362,7 @@ class MilvusStore(VectorStore):
         doc_ids: list[str] = []
         spec_numbers: list[str] = []
         chunk_indices: list[int] = []
+        metadata: list[dict] = []
         batch_size = 8000
         last_id = -1
 
@@ -334,7 +370,10 @@ class MilvusStore(VectorStore):
             try:
                 results = self._collection.query(
                     expr=f"id > {last_id}",
-                    output_fields=["id", "text", "doc_id", "spec_number", "chunk_index"],
+                    output_fields=[
+                        "id", "text", "doc_id", "spec_number", "chunk_index",
+                        "release", "series", "doc_type",
+                    ],
                     limit=batch_size,
                 )
             except MilvusException as e:
@@ -350,6 +389,11 @@ class MilvusStore(VectorStore):
             doc_ids.extend(str(r.get("doc_id", "")) for r in results)
             spec_numbers.extend(str(r.get("spec_number", "")) for r in results)
             chunk_indices.extend(int(r.get("chunk_index", 0)) for r in results)
+            metadata.extend({
+                "release": r.get("release", ""),
+                "series": r.get("series", 0),
+                "doc_type": r.get("doc_type", "3gpp"),
+            } for r in results)
             last_id = results[-1]["id"]
 
             if len(results) < batch_size:
@@ -358,7 +402,9 @@ class MilvusStore(VectorStore):
         if not texts:
             return 0
 
-        self.build_bm25(texts, doc_ids, spec_numbers, chunk_indices)
+        self.build_bm25(
+            texts, doc_ids, spec_numbers, chunk_indices, metadata=metadata,
+        )
         logger.info("BM25 索引已从 collection 重建 (%d 条)", len(texts))
         return len(texts)
 
@@ -433,18 +479,21 @@ class MilvusStore(VectorStore):
         return output
 
     def search_sparse(
-        self, query_text: str, top_k: int = 100
+        self, query_text: str, top_k: int = 100,
+        filter_expr: str | None = None,
     ) -> list[SearchResult]:
-        """BM25 稀疏检索 (Python rank-bm25)."""
+        """BM25 稀疏检索 (Python rank-bm25), 支持 Python 侧标量过滤."""
         self._ensure_connected()
         if not self._bm25.is_loaded:
             logger.warning("BM25 索引未加载")
             return []
 
-        bm25_results = self._bm25.search(query_text, top_k)
+        bm25_results = self._bm25.search_with_meta(query_text, top_k)
 
         output: list[SearchResult] = []
-        for doc_key, score, text in bm25_results:
+        for doc_key, score, text, meta in bm25_results:
+            if not _matches_filter_expr(meta, filter_expr):
+                continue
             # 解析 doc_key: "doc_id|spec_number|chunk_index"
             parts = doc_key.split("|", 2)
             doc_id = parts[0] if len(parts) > 0 else ""
@@ -457,6 +506,9 @@ class MilvusStore(VectorStore):
                 doc_id=doc_id,
                 spec_number=spec_number,
                 chunk_index=chunk_index,
+                series=meta.get("series", 0),
+                release=meta.get("release", ""),
+                doc_type=meta.get("doc_type", "3gpp"),
             ))
         return output
 
@@ -481,19 +533,19 @@ class MilvusStore(VectorStore):
         # 1. Dense 检索 (Milvus, 支持标量过滤)
         dense_results = self.search_dense(query_embedding, dense_top_k, filter_expr=filter_expr)
 
-        # 有过滤条件时跳过 BM25 (BM25 不支持 doc_type/release/series 过滤)
-        if filter_expr:
-            return dense_results[:final_top_k]
-
-        # 2. BM25 检索 (Python, 无过滤)
-        sparse_results = self.search_sparse(query_text, sparse_top_k)
+        # 2. BM25 检索 (Python, 按元数据做同样的标量过滤)
+        sparse_results = self.search_sparse(query_text, sparse_top_k, filter_expr=filter_expr)
 
         if not sparse_results:
             # BM25 不可用时降级为纯 Dense
             return dense_results[:final_top_k]
 
         # 3. RRF 融合
-        fused = self._rrf_fuse(dense_results, sparse_results, final_top_k)
+        fused = self._rrf_fuse(
+            dense_results, sparse_results, final_top_k,
+            k_dense=settings.rrf_k_dense,
+            k_sparse=settings.rrf_k_sparse,
+        )
         return fused
 
     @staticmethod
@@ -506,11 +558,15 @@ class MilvusStore(VectorStore):
         dense: list[SearchResult],
         sparse: list[SearchResult],
         final_top_k: int,
-        k: int = 60,
+        k_dense: int = 60,
+        k_sparse: int = 60,
     ) -> list[SearchResult]:
         """RRF (Reciprocal Rank Fusion) 融合 Dense + BM25 结果.
 
-        RRF(d) = sum_{r in rankings} 1 / (k + rank(d, r))
+        RRF(d) = sum_{r in rankings} 1 / (k_r + rank(d, r))
+
+        k 值越小该路排名的贡献越大: 3GPP 领域 Dense 通常优于 BM25,
+        可设 k_dense=40 / k_sparse=120 提高 Dense 权重 (需评测集回归验证).
         """
         # 建立 dense 排名表: doc_key -> rank (1-based)
         dense_rank: dict[str, int] = {}
@@ -536,9 +592,9 @@ class MilvusStore(VectorStore):
         for key in all_keys:
             rrf = 0.0
             if key in dense_rank:
-                rrf += 1.0 / (k + dense_rank[key])
+                rrf += 1.0 / (k_dense + dense_rank[key])
             if key in sparse_rank:
-                rrf += 1.0 / (k + sparse_rank[key])
+                rrf += 1.0 / (k_sparse + sparse_rank[key])
             rrf_scores[key] = rrf
 
         # 按 RRF 分数排序
