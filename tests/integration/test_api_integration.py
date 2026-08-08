@@ -2,23 +2,14 @@
 
 from __future__ import annotations
 
-import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from src.api.rest.router import router, set_pipeline
-from src.api.rest.schemas import (
-    APIResponse,
-    ChunkItem,
-    DocumentItem,
-    SearchFilters,
-    SystemStats,
-)
 from src.generator.pipeline import RAGPipeline, RAGResponse
 from src.retriever.search import RetrievalResult
-
 
 # ── Fixtures ──
 

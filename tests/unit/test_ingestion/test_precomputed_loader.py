@@ -1,6 +1,11 @@
 """precomputed_loader.py 单元测试 — 纯静态解析方法."""
 
-from src.ingestion.precomputed_loader import PrecomputedLoader
+import warnings
+
+# 该模块已被官方标记废弃 (2026-07-14), 导入时会产生 DeprecationWarning — 测试本身需要它
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    from src.ingestion.precomputed_loader import PrecomputedLoader
 
 
 class TestExtractSeries:

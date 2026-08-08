@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from src.config import settings
-
 from rank_bm25 import BM25Okapi
+
+from src.config import settings
 
 logger = logging.getLogger(__name__)
 

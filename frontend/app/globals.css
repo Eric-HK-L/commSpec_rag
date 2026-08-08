@@ -17,8 +17,82 @@ body {
   @apply bg-gray-950 text-gray-100;
 }
 
+/* ── 动效 token 体系 ── */
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* 消息 / 气泡入场：近乎不可察觉 */
+@keyframes msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.msg-enter {
+  animation: msg-in 260ms var(--ease-out) both;
+}
+
+/* Hero 首屏分层入场 */
+@keyframes hero-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+.hero-item {
+  animation: hero-in 500ms var(--ease-out) both;
+}
+
+/* 引用折叠展开内容淡入 */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+details[open] .details-content {
+  animation: fade-in 180ms var(--ease-out) both;
+}
+
+/* 按钮按压反馈（仅限可用指针设备的鼠标路径） */
+.press-feedback {
+  transition: transform 160ms var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .press-feedback:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+}
+
+/* 降低动态偏好：保留更温和的淡入，去除位移与形变 */
+@media (prefers-reduced-motion: reduce) {
+  @keyframes msg-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes hero-in {
+    from {
+      opacity: 0;
+    }
+  }
+  .press-feedback:active:not(:disabled) {
+    transform: none;
+  }
+}
+
 /* ── 滚动条美化 ── */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { @apply bg-gray-300 rounded-full; }
-.dark ::-webkit-scrollbar-thumb { @apply bg-gray-700; }
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-300 rounded-full;
+}
+.dark ::-webkit-scrollbar-thumb {
+  @apply bg-gray-700;
+}

@@ -12,7 +12,6 @@ import logging
 import sqlite3
 import time
 from collections import Counter
-from pathlib import Path
 
 from src.config import settings
 
@@ -73,8 +72,8 @@ def generate_report() -> str:
             "",
             "## 总体统计",
             "",
-            f"| 指标 | 值 |",
-            f"|---|---|",
+            "| 指标 | 值 |",
+            "|---|---|",
             f"| 总反馈数 | {total} |",
             f"| 👍 好评 | {up} ({up_ratio:.1%}) |",
             f"| 👎 差评 | {down} ({1 - up_ratio:.1%}) |",

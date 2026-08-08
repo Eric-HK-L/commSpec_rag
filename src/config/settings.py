@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import Literal
 
+from pydantic import Field
+
 # ── MPS 内存水位线 ── (必须在 torch 加载前设置)
 # 默认 HIGH=1.0 允许 Metal 使用全部系统内存, 设为 0.5 上限 50%
 # 已验证: batch_size=4 + HIGH=0.5 + LOW=0.3 → wired 仅 8GB
@@ -38,6 +40,7 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.0
     llm_max_tokens: int = 2048
     llm_timeout: float = 60.0
+    llm_max_retries: int = 2  # OpenAI 客户端对 429/5xx 的自动重试次数
 
     # ── 嵌入模型 ──
     embedding_provider: Literal["api", "local"] = "local"  # 默认本地 BGE-M3
@@ -124,6 +127,20 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     api_workers: int = 1
+
+    # ── 安全与认证 ──
+    admin_username: str = "admin"
+    admin_password: str = ""  # 为空时管理后台登录禁用 (默认关闭, 避免硬编码弱口令)
+    admin_session_secret: str = ""  # 为空时进程内随机生成 (多 worker 部署必须显式配置)
+    admin_session_ttl_hours: int = 12
+    # 允许跨域来源 (JSON 数组); 为空时不启用 CORS (仅同源/反向代理访问)
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"]
+    )
+
+    # ── 速率限制 ──
+    rate_limit_enabled: bool = False  # 为 True 时对 /ask /search 按 IP 限流
+    rate_limit_rpm: int = 60  # 每 IP 每分钟请求上限 (LLM 相关端点)
 
     # ── 日志 ──
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"

@@ -1,0 +1,7 @@
+package-lock.json
+frontend/package-lock.json
+frontend/.next
+data
+logs
+open_sources
+.venv

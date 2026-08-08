@@ -139,7 +139,7 @@ _TAXONOMY_KEYWORDS_EN = [
 ]
 
 
-def _is_taxonomy_query(query: str) -> bool:
+def is_taxonomy_query(query: str) -> bool:
     """检测查询是否为分类/列举类问题."""
     for kw in _TAXONOMY_KEYWORDS_CN:
         if kw in query:
@@ -191,7 +191,7 @@ def build_rag_prompt(
             避免 LLM 因英文上下文输出英文再触发回译 (省一次完整生成).
     """
     # 分类列举问题需要更多上下文覆盖
-    _is_taxonomy = _is_taxonomy_query(query)
+    _is_taxonomy = is_taxonomy_query(query)
     if _is_taxonomy:
         max_context_chunks = min(max_context_chunks * 2, len(retrieved_chunks))
 
@@ -216,7 +216,7 @@ def build_rag_prompt(
             for j, t in enumerate(adjacent[:4]):
                 adj_lines.append(f"  [{i+1}.{j+1}] {_grid_table_to_pipe(t)[:500]}")
             if adj_lines:
-                context_parts.append(f"  （相邻上下文：同文档邻近段落, 非检索命中但语义相关）\n" + "\n".join(adj_lines))
+                context_parts.append("  （相邻上下文：同文档邻近段落, 非检索命中但语义相关）\n" + "\n".join(adj_lines))
 
         chunk.text = original_text
     context_text = "\n\n---\n\n".join(context_parts)

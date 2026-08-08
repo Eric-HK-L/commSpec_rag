@@ -1,6 +1,5 @@
 """测试 LLMClient — OpenAI 兼容接口."""
 
-import pytest
 
 from src.generator.llm_client import LLMClient
 
@@ -40,15 +39,15 @@ class TestLLMClientInterface:
         assert callable(client.embed)
 
     def test_chat_accepts_messages(self):
-        client = LLMClient()
         # 测试接口签名 — 实际调用需 API Key
+        LLMClient()
         assert True  # 接口存在性已验证
 
     def test_embed_returns_correct_dim(self, monkeypatch):
         """Mock embed 返回 1024 维向量."""
         from src.config import settings
         monkeypatch.setattr(settings, "embedding_dimension", 1024)
-        
+
         client = LLMClient()
         # 不实际调用 API, 仅验证接口
         assert hasattr(client, "embed")

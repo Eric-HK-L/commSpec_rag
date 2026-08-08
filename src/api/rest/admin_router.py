@@ -1,6 +1,7 @@
 """Phase 4 管理 API — 知识库运维端点."""
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
@@ -15,16 +16,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field
 
+from src.api.auth import (
+    clear_admin_session,
+    create_admin_session,
+    require_admin,
+)
 from src.api.rest.router import get_pipeline
 from src.api.rest.schemas import APIResponse
-from src.config import settings, ingestion_config
+from src.config import ingestion_config, settings
 
 logger = logging.getLogger(__name__)
 
-admin_router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
+admin_router = APIRouter(
+    prefix="/api/v1/admin", tags=["Admin"], dependencies=[Depends(require_admin)]
+)
+auth_router = APIRouter(prefix="/api/v1/admin", tags=["Admin Auth"])
 
 # 项目根目录 (跨平台)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -118,6 +127,31 @@ _ORAN_HEAD_RE = re.compile(r"O-RAN\s+ALLIANCE|O-RAN\s+WORKING\s+GROUP", re.IGNOR
 
 
 # ── 端点实现 ──
+
+class AdminLoginRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+@auth_router.post("/login", response_model=APIResponse[dict])
+async def admin_login(req: AdminLoginRequest, response: Response) -> APIResponse[dict]:
+    """管理员登录 — 校验通过后写入 httpOnly 签名会话 Cookie."""
+    if not settings.admin_password:
+        raise HTTPException(status_code=403, detail="管理后台未启用 (未配置 ADMIN_PASSWORD)")
+    user_ok = hmac.compare_digest(req.username, settings.admin_username)
+    pass_ok = hmac.compare_digest(req.password, settings.admin_password)
+    if not (user_ok and pass_ok):
+        raise HTTPException(status_code=401, detail="账号或密码错误")
+    create_admin_session(response, req.username)
+    return APIResponse.ok({"username": req.username})
+
+
+@auth_router.post("/logout", response_model=APIResponse[dict])
+async def admin_logout(response: Response) -> APIResponse[dict]:
+    """管理员退出登录 — 清除会话 Cookie."""
+    clear_admin_session(response)
+    return APIResponse.ok({"ok": True})
+
 
 @admin_router.get("/stats", response_model=APIResponse[AdminStats])
 async def admin_stats() -> APIResponse[AdminStats]:
@@ -555,7 +589,7 @@ async def system_logs(
         # 级别过滤
         if level != "ALL":
             level_upper = level.upper()
-            all_lines = [l for l in all_lines if level_upper in l]
+            all_lines = [line for line in all_lines if level_upper in line]
 
         # 取尾行
         tail = all_lines[-lines:] if len(all_lines) > lines else all_lines

@@ -15,10 +15,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from src.config import settings, ingestion_config
+from src.config import ingestion_config, settings
 from src.ingestion.embedder import BatchEmbedder
 from src.ingestion.embedding_cache import EmbeddingCache
-from src.ingestion.extractor import PandocExtractor, ExtractionResult
+from src.ingestion.extractor import ExtractionResult, PandocExtractor
 from src.ingestion.splitter import HeaderAwareSplitter, classify_chunk
 from src.retriever.vector_store import Chunk, VectorStore
 
@@ -195,57 +195,20 @@ class IngestionOrchestrator:
         return all_chunks
 
     def _save_chunks_interim(self, key: str, chunks: list[Chunk]) -> None:
-        """保存 chunk 中间结果到 JSON."""
+        """保存 chunk 中间结果到 JSON (序列化由 Chunk.to_dict 统一提供)."""
         self._interim.mkdir(parents=True, exist_ok=True)
-        data = [
-            {
-                "text": c.text,
-                "doc_id": c.doc_id,
-                "series": c.series,
-                "spec_number": c.spec_number,
-                "release": c.release,
-                "parent_section_id": c.parent_section_id,
-                "parent_title": c.parent_title,
-                "chunk_index": c.chunk_index,
-                "doc_type": c.doc_type,
-                # Phase 5: chunk 元数据
-                "content_type": c.content_type,
-                "spec_role": c.spec_role,
-                "topic_domain": c.topic_domain,
-                "section_number": c.section_number,
-                "section_title": c.section_title,
-                "section_path": c.section_path,
-            }
-            for c in chunks
-        ]
+        data = [c.to_dict() for c in chunks]
         path = self._interim / f"{key}_chunks.json"
         with open(path, "w") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         logger.info("保存 %d chunks → %s", len(chunks), path)
 
     def _load_chunks_interim(self, key: str) -> list[Chunk]:
-        """从 JSON 加载中间 chunk 结果."""
+        """从 JSON 加载中间 chunk 结果 (反序列化由 Chunk.from_dict 统一提供)."""
         path = self._interim / f"{key}_chunks.json"
         with open(path) as f:
             data = json.load(f)
-        return [
-            Chunk(
-                text=d["text"], doc_id=d["doc_id"], series=d["series"],
-                spec_number=d["spec_number"], release=d["release"],
-                parent_section_id=d["parent_section_id"],
-                parent_title=d["parent_title"],
-                chunk_index=d["chunk_index"],
-                embedding=None,
-                doc_type=d.get("doc_type", "3gpp"),
-                content_type=d.get("content_type", ""),
-                spec_role=d.get("spec_role", ""),
-                topic_domain=d.get("topic_domain", ""),
-                section_number=d.get("section_number", ""),
-                section_title=d.get("section_title", ""),
-                section_path=d.get("section_path", ""),
-            )
-            for d in data
-        ]
+        return [Chunk.from_dict(d) for d in data]
 
     def _load_interim_extractions(self, key: str) -> list[ExtractionResult]:
         """从 interim 加载提取结果 (简化版, 仅恢复 markdown)."""

@@ -88,9 +88,9 @@ def run_eval(test_set_path: str, top_k: int = 20, dry_run: bool = False) -> None
 
     # 3. 初始化检索器 (完整 RAGPipeline: 查询扩展 + Dense+BM25 混合检索)
     try:
-        from src.retriever.milvus_store import MilvusStore
-        from src.generator.pipeline import RAGPipeline
         from src.config import settings
+        from src.generator.pipeline import RAGPipeline
+        from src.retriever.milvus_store import MilvusStore
 
         store = MilvusStore(
             host=settings.milvus_host,

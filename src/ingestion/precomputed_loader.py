@@ -8,20 +8,11 @@
 
 from __future__ import annotations
 
-import warnings
-
-warnings.warn(
-    "precomputed_loader 已废弃 (2026-07-14)。"
-    " 当前系统使用 bulk_ingest.py 从本地 DOCX 直接嵌入，不再依赖 HuggingFace 预计算数据集。"
-    " 此模块保留仅作历史参考，后续版本将删除。",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
 import json
 import logging
 import re
 import sqlite3
+import warnings
 from typing import Any
 
 import numpy as np
@@ -30,6 +21,14 @@ from src.config import settings
 from src.retriever.vector_store import Chunk, VectorStore
 
 logger = logging.getLogger(__name__)
+
+warnings.warn(
+    "precomputed_loader 已废弃 (2026-07-14)。"
+    " 当前系统使用 bulk_ingest.py 从本地 DOCX 直接嵌入，不再依赖 HuggingFace 预计算数据集。"
+    " 此模块保留仅作历史参考，后续版本将删除。",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 class PrecomputedLoader:

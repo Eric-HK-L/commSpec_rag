@@ -19,9 +19,10 @@ class TestSkipPaths:
         from src.api.auth import _SKIP_PATHS
         assert "/openapi.json" in _SKIP_PATHS
 
-    def test_mcp_skipped(self):
+    def test_mcp_requires_auth(self):
+        """MCP 路径不再无条件放行 — 与其余 API 一致接受 API Key 校验."""
         from src.api.auth import _SKIP_PATHS
-        assert "/api/v1/mcp" in _SKIP_PATHS
+        assert "/api/v1/mcp" not in _SKIP_PATHS
 
 
 class TestKeyParsing:

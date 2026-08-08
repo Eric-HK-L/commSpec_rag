@@ -8,8 +8,6 @@
 import time
 
 import numpy as np
-import pytest
-
 
 # ── 嵌入缓存基准 ──
 
@@ -110,8 +108,9 @@ class TestQueryCacheBenchmark:
     """查询级 LRU 缓存性能."""
 
     def test_ttl_cache_lookup(self):
-        from cachetools import TTLCache
         import hashlib
+
+        from cachetools import TTLCache
         cache = TTLCache(maxsize=1000, ttl=3600)
 
         # 预填充

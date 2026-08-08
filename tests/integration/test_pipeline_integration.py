@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import time
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -12,13 +11,10 @@ import pytest
 from src.generator.pipeline import (
     RAGPipeline,
     RAGResponse,
-    _extract_spec_numbers,
-    _filter_low_quality,
-    _is_low_quality,
-    _spec_aware_rerank,
 )
+from src.retriever.planner import _extract_spec_numbers, _spec_aware_rerank
+from src.retriever.result_quality import filter_low_quality, is_low_quality
 from src.retriever.search import RetrievalResult
-
 
 # ── Fixtures ──
 
@@ -84,7 +80,6 @@ def mock_llm():
 
     def _chat(messages, temperature=None, max_tokens=None):
         # 检查消息内容决定返回值
-        user_content = messages[-1]["content"] if messages else ""
         if "查询优化器" in messages[0].get("content", ""):
             # 查询扩展
             return "PDU session setup procedure NGAP protocol N2 interface 38.413"
@@ -145,20 +140,20 @@ class TestPipelineInit:
     """RAGPipeline 初始化与组件创建."""
 
     def test_creates_hybrid_retriever(self, pipeline):
-        assert pipeline._retriever is not None
+        assert pipeline._planner._retriever is not None
 
     def test_creates_verifier(self, pipeline):
         assert pipeline._verifier is not None
 
     def test_creates_multi_hop(self, pipeline):
-        assert pipeline._multi_hop is not None
+        assert pipeline._planner._multi_hop is not None
 
     def test_creates_query_cache(self, pipeline):
         assert pipeline._query_cache is not None
         assert pipeline._query_cache.maxsize == 256
 
     def test_online_supplement_disabled(self, pipeline, monkeypatch):
-        assert not pipeline._online.enabled
+        assert not pipeline._planner._online.enabled
 
 
 # ── Pipeline ask() 集成测试 ──
@@ -191,6 +186,13 @@ class TestPipelineAsk:
         r1 = pipeline.ask("PDU session query A")
         r2 = pipeline.ask("PDU session query B")
         assert r1 is not r2
+
+    def test_ask_cache_key_includes_filters(self, pipeline):
+        """相同查询 + 不同过滤参数不应命中同一缓存 (修复跨过滤串缓存)."""
+        r1 = pipeline.ask("PDU session filter test", release="R18")
+        r2 = pipeline.ask("PDU session filter test", release="R17")
+        assert r1 is not r2
+        assert len(pipeline._query_cache) >= 2
 
     def test_ask_with_reranker_disabled(self, pipeline):
         response = pipeline.ask("PDU Session", reranker_enabled=False)
@@ -263,8 +265,8 @@ class TestPipelineSearch:
         monkeypatch.setattr(settings, "enable_online_search", False)
 
         pipeline2 = RAGPipeline(vector_store=mock_store, llm_client=mock_llm)
-        # 重写 _expand_query 使查询包含 spec 号
-        pipeline2._expand_query = lambda q: "38.413 PDU session setup"
+        # 重写 planner 的 _expand_query 使查询包含 spec 号
+        pipeline2._planner._expand_query = lambda q: "38.413 PDU session setup"
 
         results = pipeline2.search("PDU session", top_k=3)
         assert len(results) > 0
@@ -297,33 +299,33 @@ class TestExtractSpecNumbers:
 
 
 class TestFilterLowQuality:
-    """_filter_low_quality + _is_low_quality — 低质量 chunks 过滤."""
+    """filter_low_quality + is_low_quality — 低质量 chunks 过滤 (统一质量策略)."""
 
     def test_abbreviations_filtered(self):
         r = RetrievalResult(chunk_id="1", text="3GPP 5GS PDCP ...",
                             score=0.8, spec_number="38.413",
                             parent_section_id="3.3",
                             parent_title="Abbreviations")
-        assert _is_low_quality(r) is True
+        assert is_low_quality(r) is True
 
     def test_definitions_filtered(self):
         r = RetrievalResult(chunk_id="1", text="For the purposes of...",
                             score=0.8, spec_number="38.413",
                             parent_section_id="3.1",
                             parent_title="Definitions")
-        assert _is_low_quality(r) is True
+        assert is_low_quality(r) is True
 
     def test_references_filtered(self):
         r = RetrievalResult(chunk_id="1", text="[1] 3GPP TS 38.300...",
                             score=0.8, spec_number="38.413",
                             parent_section_id="2",
                             parent_title="References")
-        assert _is_low_quality(r) is True
+        assert is_low_quality(r) is True
 
     def test_structural_prefix_filtered(self):
         r = RetrievalResult(chunk_id="1", text="#  Contents\n1 Scope\n2 References",
                             score=0.8, spec_number="38.413")
-        assert _is_low_quality(r) is True
+        assert is_low_quality(r) is True
 
     def test_normal_content_passes(self):
         r = RetrievalResult(chunk_id="1",
@@ -331,10 +333,10 @@ class TestFilterLowQuality:
                             score=0.8, spec_number="38.413",
                             parent_section_id="8.3.1",
                             parent_title="PDU Session Setup Procedure")
-        assert _is_low_quality(r) is False
+        assert is_low_quality(r) is False
 
     def test_filter_preserves_quality(self, sample_results):
-        filtered = _filter_low_quality(sample_results, target_k=2)
+        filtered = filter_low_quality(sample_results, target_k=2)
         assert len(filtered) >= 1  # 至少保留高质量结果
 
     def test_filter_scene_title_not_filtered(self):
@@ -344,7 +346,7 @@ class TestFilterLowQuality:
                             score=0.8, spec_number="38.413",
                             parent_section_id="6.2",
                             parent_title="Reference operation")
-        assert _is_low_quality(r) is False
+        assert is_low_quality(r) is False
 
 
 class TestSpecAwareRerank:
@@ -454,16 +456,16 @@ class TestPipelineErrorRecovery:
         from src.config import settings
         monkeypatch.setattr(settings, "enable_online_search", False)
 
-        # mock _resolve_cross_refs 内部抛异常
+        # mock planner._resolve_cross_refs 内部抛异常
         pipeline2 = RAGPipeline(vector_store=mock_store, llm_client=mock_llm)
         # 重写使其内部异常被捕获
-        original_resolve = pipeline2._resolve_cross_refs
+        original_resolve = pipeline2._planner._resolve_cross_refs
         def _failing_resolve(results, max_refs=5):
             try:
                 return original_resolve(results, max_refs)
             except Exception:
                 return results  # 降级返回原始结果
-        pipeline2._resolve_cross_refs = _failing_resolve
+        pipeline2._planner._resolve_cross_refs = _failing_resolve
 
         response = pipeline2.ask("PDU session test")
         assert isinstance(response, RAGResponse)

@@ -11,10 +11,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src import __version__
 from src.api.auth import APIKeyMiddleware
-from src.api.rest.admin_router import admin_router
+from src.api.rest.admin_router import admin_router, auth_router
 from src.api.rest.feedback import router as feedback_router
-from src.api.rest.middleware import RequestLoggingMiddleware, register_exception_handlers
+from src.api.rest.middleware import (
+    RateLimitMiddleware,
+    RequestLoggingMiddleware,
+    register_exception_handlers,
+)
 from src.api.rest.router import router, set_pipeline
 from src.config import settings
 from src.generator.llm_client import LLMClient
@@ -149,7 +154,7 @@ app = FastAPI(
 - **Ingestion**: DOCX 摄入管线 (下载→转换→分块→嵌入)
 - **Streaming**: SSE 流式生成, 逐 token 推送
 """,
-    version="0.2.0",
+    version=__version__,
     lifespan=lifespan,
     openapi_tags=[
         {"name": "Search", "description": "语义检索 + 混合检索"},
@@ -159,22 +164,25 @@ app = FastAPI(
     ],
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if settings.cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(PrometheusMiddleware)
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(APIKeyMiddleware)
 
 register_exception_handlers(app)
 
 app.include_router(router)
 app.include_router(admin_router)
+app.include_router(auth_router)
 app.include_router(feedback_router)
 
 # Prometheus /metrics 端点

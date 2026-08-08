@@ -13,7 +13,11 @@ const NAV = [
   { href: "/admin/system", label: "系统健康" },
 ];
 
-export default function AdminLayout({ children }: { children: React.ReactNode }) {
+export default function AdminLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -22,8 +26,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     return <>{children}</>;
   }
 
-  const handleLogout = () => {
-    document.cookie = "admin_auth=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/v1/admin/logout", { method: "POST" });
+    } catch {
+      // 即使后端不可达也清除本地 Cookie, 保证能退出
+    }
+    document.cookie =
+      "admin_session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
     router.push("/admin/login");
   };
 
@@ -32,11 +42,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {/* 侧边栏 */}
       <aside className="w-52 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700 flex-shrink-0 flex flex-col transition-colors">
         <div className="px-4 py-4 border-b border-gray-100 dark:border-gray-800">
-          <span className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">管理控制台</span>
+          <span className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">
+            管理控制台
+          </span>
         </div>
         <nav className="p-2 space-y-0.5 flex-1">
           {NAV.map((item) => {
-            const active = pathname === item.href || (item.href !== "/admin" && pathname.startsWith(item.href));
+            const active =
+              pathname === item.href ||
+              (item.href !== "/admin" && pathname.startsWith(item.href));
             return (
               <Link
                 key={item.href}

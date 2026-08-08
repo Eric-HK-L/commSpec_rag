@@ -1,15 +1,14 @@
 """Phase 5 新功能测试 — classify_chunk + _segment_by_atomic_blocks（纯函数）."""
 
 import pytest
+
 from src.ingestion.splitter import (
     AUTHORITATIVE_SPECS,
     DEFINITION_KEYWORDS,
-    HeaderAwareSplitter,
     PROCEDURE_KEYWORDS,
+    HeaderAwareSplitter,
     classify_chunk,
-    _contains_table,
 )
-
 
 # ════════════════════════════════════════════════════════════════
 # classify_chunk — content_type 检测

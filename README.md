@@ -38,13 +38,13 @@
 └──────────┴──────────┴──────────┴──────────┴──────────┴─────────┘
 ```
 
-| 层级 | 模块 | 说明 |
-|------|------|------|
-| 📥 Ingestion | `ingestion/` | DOCX → Markdown → 分块 → BGE 嵌入 → Milvus |
-| 🔍 Retriever | `retriever/` | 混合检索 + NN Router + 多跳 + 交叉引用 + 在线补充 |
-| ✨ Generator | `generator/` | Prompt 模板 + LLM 客户端 + 答案验证 + 多语言 |
-| 🌐 API | `api/` | REST (FastAPI) + MCP 工具 + Prometheus /metrics |
-| 🖥 Frontend | `frontend/` | Next.js 14 用户端 + 管理后台 (5 页面 + 暗色双主题) |
+| 层级         | 模块         | 说明                                               |
+| ------------ | ------------ | -------------------------------------------------- |
+| 📥 Ingestion | `ingestion/` | DOCX → Markdown → 分块 → BGE 嵌入 → Milvus         |
+| 🔍 Retriever | `retriever/` | 混合检索 + NN Router + 多跳 + 交叉引用 + 在线补充  |
+| ✨ Generator | `generator/` | Prompt 模板 + LLM 客户端 + 答案验证 + 多语言       |
+| 🌐 API       | `api/`       | REST (FastAPI) + MCP 工具 + Prometheus /metrics    |
+| 🖥 Frontend   | `frontend/`  | Next.js 14 用户端 + 管理后台 (5 页面 + 暗色双主题) |
 
 ## 📁 目录结构
 
@@ -164,14 +164,15 @@ python -m src.main
 cd frontend && npm run dev
 ```
 
-| 服务 | 地址 |
-|------|------|
-| API 文档 (Swagger) | http://localhost:8000/docs |
-| 用户前端 | http://localhost:3000 |
-| 管理后台 | http://localhost:3000/admin |
-| Prometheus 指标 | http://localhost:8000/metrics |
+| 服务               | 地址                          |
+| ------------------ | ----------------------------- |
+| API 文档 (Swagger) | http://localhost:8000/docs    |
+| 用户前端           | http://localhost:3000         |
+| 管理后台           | http://localhost:3000/admin   |
+| Prometheus 指标    | http://localhost:8000/metrics |
 
-默认管理员账号：`admin` / `linux123`
+管理后台默认账号为 `admin`，密码通过环境变量 `ADMIN_PASSWORD` 配置
+（未配置时后台登录禁用）。生产环境请务必同时配置 `ADMIN_SESSION_SECRET` 与 `API_KEYS`。
 
 ### Docker 一键部署
 
@@ -187,17 +188,17 @@ python scripts/bulk_ingest.py
 
 ## 🔧 技术栈
 
-| 组件 | 选型 |
-|------|------|
-| LLM | OpenAI 兼容 API（GPT-4o / DeepSeek / Qwen） |
-| 嵌入模型 | BAAI/bge-m3（多语言，1024-dim，稠密+稀疏双向量） |
-| 向量数据库 | Milvus 2.4（Dense + Sparse BM25） |
-| 文档处理 | Pandoc + python-docx |
-| API 框架 | FastAPI + Uvicorn |
-| 前端 | Next.js 14 + Tailwind CSS + Recharts |
-| 监控 | prometheus_client |
-| 配置 | pydantic-settings + python-dotenv |
-| 部署 | Docker Compose |
+| 组件       | 选型                                             |
+| ---------- | ------------------------------------------------ |
+| LLM        | OpenAI 兼容 API（GPT-4o / DeepSeek / Qwen）      |
+| 嵌入模型   | BAAI/bge-m3（多语言，1024-dim，稠密+稀疏双向量） |
+| 向量数据库 | Milvus 2.4（Dense + Sparse BM25）                |
+| 文档处理   | Pandoc + python-docx                             |
+| API 框架   | FastAPI + Uvicorn                                |
+| 前端       | Next.js 14 + Tailwind CSS + Recharts             |
+| 监控       | prometheus_client                                |
+| 配置       | pydantic-settings + python-dotenv                |
+| 部署       | Docker Compose                                   |
 
 ## 📖 参考论文
 
@@ -206,13 +207,31 @@ python scripts/bulk_ingest.py
 
 ## 📚 更多文档
 
-| 文档 | 说明 |
-|------|------|
-| [文档中心](./docs/README.md) | 全部文档总索引（设计/部署/白皮书/计划） |
-| [架构设计](./docs/design/architecture.md) | 系统架构、模块详解、数据流、关键决策 |
-| [离线部署指南](./docs/deployment/offline-deployment.md) | 内网环境离线安装（pip wheels + Docker 镜像） |
-| [硬件兼容性](./docs/design/hardware-compatibility.md) | 跨平台运行指南（Intel / NVIDIA GB10 / Apple Silicon） |
-| [Phase 计划](./docs/plans/) | 项目演进路线图（Phase 1-4） |
+| 文档                                                    | 说明                                                  |
+| ------------------------------------------------------- | ----------------------------------------------------- |
+| [文档中心](./docs/README.md)                            | 全部文档总索引（设计/部署/白皮书/计划）               |
+| [架构设计](./docs/design/architecture.md)               | 系统架构、模块详解、数据流、关键决策                  |
+| [离线部署指南](./docs/deployment/offline-deployment.md) | 内网环境离线安装（pip wheels + Docker 镜像）          |
+| [硬件兼容性](./docs/design/hardware-compatibility.md)   | 跨平台运行指南（Intel / NVIDIA GB10 / Apple Silicon） |
+| [Phase 计划](./docs/plans/)                             | 项目演进路线图（Phase 1-4）                           |
+
+## 🧪 测试分层
+
+测试按 **UT → BT → E2E** 三级组织，可独立运行：
+
+| 层级        | 目录                 | 运行命令                         | 依赖                    |
+| ----------- | -------------------- | -------------------------------- | ----------------------- |
+| UT 单元测试 | `tests/unit/`        | `pytest tests/unit -m unit`      | 无（外部服务全部 mock） |
+| BT 集成测试 | `tests/integration/` | `pytest tests/integration -m bt` | 无（mock Milvus/LLM）   |
+| E2E 端到端  | `tests/e2e/`         | `pytest tests/e2e -m e2e`        | 真实 Milvus + LLM       |
+
+```bash
+# 全量测试（默认排除 e2e）
+pytest
+# 单独跑某一层
+pytest tests/unit -m unit
+pytest tests/integration -m bt
+```
 
 ## 📄 License
 

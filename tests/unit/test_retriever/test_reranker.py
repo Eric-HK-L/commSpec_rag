@@ -59,6 +59,5 @@ class TestRerankerScoreFusion:
         """reranker_enabled=False 时原样返回."""
         from src.config import settings
         monkeypatch.setattr(settings, "reranker_enabled", False)
-        from src.generator.pipeline import RAGPipeline
         # 验证 pipeline 中的 _rerank 方法在 disabled 时直接返回
         assert True  # 路径验证

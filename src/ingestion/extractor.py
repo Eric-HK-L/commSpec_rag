@@ -236,7 +236,6 @@ class PandocExtractor:
             return "", "", ""
         wg_num = m.group(1)
         interface = m.group(2)
-        revision = m.group(3)  # R003
         version = m.group(4)   # v11.00
 
         # 构建 O-RAN 规范编号

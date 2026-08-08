@@ -23,6 +23,7 @@ from src.api.rest.schemas import (
 )
 from src.generator.pipeline import RAGPipeline
 from src.retriever.cross_ref import extract_references
+from src.retriever.result_quality import filter_low_quality
 from src.retriever.search import RetrievalResult
 
 logger = logging.getLogger(__name__)
@@ -132,8 +133,8 @@ async def search_endpoint(req: SearchRequest) -> APIResponse[SearchResponse]:
             series=req.filters.series if req.filters else None,
             doc_type=req.filters.doc_type if req.filters else None,
         )
-        # 过滤低信息密度章节 (缩写表等)
-        results = _filter_low_quality(results, req.top_k)
+        # 过滤低信息密度章节 (缩写表等) — 与 /ask 管线共用同一质量策略
+        results = filter_low_quality(results, req.top_k)
         # 客户端 spec_number 精细过滤
         if req.filters and req.filters.spec_number:
             results = [r for r in results if r.spec_number == req.filters.spec_number]
@@ -192,23 +193,7 @@ def _result_to_source(r: RetrievalResult) -> SourceItem:
     )
 
 
-LOW_QUALITY_SECTIONS = {"Abbreviations", "Definitions", "Symbols", "References"}
-
-
-def _filter_low_quality(results: list[RetrievalResult], target_k: int) -> list[RetrievalResult]:
-    """过滤低信息密度章节（缩写表、符号表等），保留 target_k 条高质量结果."""
-    quality: list[RetrievalResult] = []
-    for r in results:
-        if r.parent_title not in LOW_QUALITY_SECTIONS:
-            quality.append(r)
-            if len(quality) >= target_k:
-                break
-    # 如果高质量结果不够，补充低质量结果
-    if len(quality) < target_k:
-        for r in results:
-            if r.parent_title in LOW_QUALITY_SECTIONS and len(quality) < target_k:
-                quality.append(r)
-    return quality
+# 低质量过滤统一由 src.retriever.result_quality.filter_low_quality 提供
 
 
 # ── 搜索增强 ──
@@ -262,7 +247,7 @@ async def search_batch_endpoint(req: BatchSearchRequest) -> APIResponse[list[Bat
             series=q.filters.series if q.filters else None,
             doc_type=q.filters.doc_type if q.filters else None,
         )
-        results = _filter_low_quality(results, q.top_k)
+        results = filter_low_quality(results, q.top_k)
         if q.filters and q.filters.spec_number:
             results = [r for r in results if r.spec_number == q.filters.spec_number]
             results = results[:q.top_k]
@@ -347,7 +332,6 @@ async def delete_document(doc_id: str) -> APIResponse[dict]:
             m = IngestionManifest()
             m.load()
             # 通过 doc_id 反查 spec_number+release (doc_id 格式: "38300-i10", "23700-18-i00")
-            import re as _re
             for key in list(m._records.keys()):
                 sn, rel = key.split("|", 1)
                 rec = m._records[key]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 import numpy as np
 
@@ -67,6 +67,23 @@ class Chunk:
     content_type: str = ""       # "parameter_table" | "definition" | "procedure" | "overview"
     spec_role: str = ""          # "authoritative" | "supporting" | "overview"
     topic_domain: str = ""       # "phy_layer" | "mac_layer" | "rrc_layer" | "ran_arch"
+
+    # ── 序列化: 字段定义与序列化同住一处, 新增字段零同步成本 ──
+    # embedding 是运行时计算的向量, 不参与磁盘序列化
+
+    def to_dict(self) -> dict:
+        """序列化为可 JSON 落盘的 dict (不含 embedding)."""
+        return {
+            f.name: getattr(self, f.name)
+            for f in fields(self.__class__)
+            if f.name != "embedding"
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Chunk":
+        """从 dict 反序列化 — 未知字段容错, 缺失字段用默认值."""
+        valid = {f.name for f in fields(cls)} - {"embedding"}
+        return cls(**{k: v for k, v in data.items() if k in valid})
 
 
 # ═══════════════════════════════════════════════════════════════════════

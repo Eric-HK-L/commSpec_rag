@@ -1,10 +1,27 @@
 """测试 BatchEmbedder — 双层缓存 + 嵌入降级."""
 
+import hashlib
+
 import numpy as np
 import pytest
 
 from src.ingestion.embedder import BatchEmbedder
 from src.ingestion.embedding_cache import EmbeddingCache
+
+
+@pytest.fixture
+def fake_embed_client():
+    """确定性嵌入 stub — 不依赖本地 BGE-M3 / torch 设备状态."""
+    class _FakeEmbedClient:
+        def embed(self, texts):
+            vectors = []
+            for text in texts:
+                digest = hashlib.sha256(text.encode()).digest()
+                vec = np.frombuffer(digest, dtype=np.uint8).astype(np.float32)
+                vec = np.tile(vec, (1024 + len(vec) - 1) // len(vec))[:1024]
+                vectors.append(vec / (np.linalg.norm(vec) + 1e-8))
+            return vectors
+    return _FakeEmbedClient()
 
 
 class TestBatchEmbedderInit:
@@ -35,23 +52,26 @@ class TestBatchEmbedderEmpty:
         assert isinstance(result, np.ndarray)
         assert result.shape == (0, 1024)
 
-    def test_embed_batch_single(self):
+    def test_embed_batch_single(self, fake_embed_client):
         """单条文本嵌入 (需要 BGE-M3)."""
         embedder = BatchEmbedder(batch_size=4)
+        embedder._llm_client = fake_embed_client
         result = embedder.embed_batch(["PDU Session Establishment procedure"])
         assert isinstance(result, np.ndarray)
         assert result.shape == (1, 1024)
         assert result.dtype == np.float32
 
-    def test_embed_single(self):
+    def test_embed_single(self, fake_embed_client):
         embedder = BatchEmbedder(batch_size=4)
+        embedder._llm_client = fake_embed_client
         result = embedder.embed_single("Test text")
         assert isinstance(result, np.ndarray)
         assert result.shape == (1024,)
 
-    def test_embed_batch_consistency(self):
+    def test_embed_batch_consistency(self, fake_embed_client):
         """同一文本两次嵌入应返回相同维度."""
         embedder = BatchEmbedder(batch_size=4)
+        embedder._llm_client = fake_embed_client
         r1 = embedder.embed_single("NR cell search procedure")
         r2 = embedder.embed_single("NR cell search procedure")
         assert r1.shape == r2.shape == (1024,)
@@ -60,22 +80,23 @@ class TestBatchEmbedderEmpty:
 class TestCacheIntegration:
     """缓存集成测试 — 验证 SQLite 缓存命中路径."""
 
-    def test_cache_hit_on_second_call(self, tmp_path):
+    def test_cache_hit_on_second_call(self, tmp_path, fake_embed_client):
         cache = EmbeddingCache(db_path=tmp_path / "test_cache.db")
         embedder = BatchEmbedder(batch_size=4, sqlite_cache=cache)
+        embedder._llm_client = fake_embed_client
         texts = ["PDU Session Resource Setup Request Transfer"]
-        
+
         # 首次嵌入
         e1 = embedder.embed_batch(texts)
         assert e1.shape == (1, 1024)
-        
+
         # 验证缓存已写入
         cached = cache.get(texts[0])
         assert cached is not None
         np.testing.assert_array_almost_equal(e1[0], cached, decimal=4)
-        
+
         # 二次调用应从缓存命中
-        e2 = embedder.embed_batch(texts)
+        embedder.embed_batch(texts)
         st = cache.stats()
         assert st["total_entries"] >= 1  # 不应重复写入
 
@@ -94,9 +115,10 @@ class TestCacheIntegration:
         assert st["size_mb"] > 0
         assert "test_stats.db" in st["db_path"]
 
-    def test_cache_clear(self, tmp_path):
+    def test_cache_clear(self, tmp_path, fake_embed_client):
         cache = EmbeddingCache(db_path=tmp_path / "test_cache3.db")
         embedder = BatchEmbedder(batch_size=4, sqlite_cache=cache)
+        embedder._llm_client = fake_embed_client
         embedder.embed_batch(["test"])
         assert cache.stats()["total_entries"] == 1
         removed = cache.clear()
@@ -135,10 +157,10 @@ class TestCacheMethods:
         cache = EmbeddingCache(db_path=tmp_path / "test_batch.db")
         texts = [f"batch text {i}" for i in range(10)]
         embs = np.random.randn(10, 1024).astype(np.float32)
-        
+
         count = cache.put_batch(texts, embs)
         assert count == 10
-        
+
         hits = cache.get_batch(texts)
         assert len(hits) == 10
         for i, text in enumerate(texts):

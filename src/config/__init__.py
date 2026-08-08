@@ -1,4 +1,4 @@
-from .settings import settings, ingestion_config
+from .settings import ingestion_config, settings
 
 __all__ = ["settings", "ingestion_config"]
 """

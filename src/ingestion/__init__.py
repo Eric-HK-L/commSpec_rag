@@ -11,14 +11,12 @@ IncrementalIndexer  — 增量索引
 """
 
 from .embedder import BatchEmbedder
-from .extractor import PandocExtractor, ExtractionResult
+from .extractor import ExtractionResult, PandocExtractor
 from .incremental import IncrementalIndexer, IndexEntry
 from .orchestrator import IngestionOrchestrator, IngestionStats
-from .precomputed_loader import PrecomputedLoader  # 已废弃 (2026-07-14), 保留仅作兼容
 from .splitter import HeaderAwareSplitter
 
 __all__ = [
-    "PrecomputedLoader",
     "PandocExtractor",
     "ExtractionResult",
     "HeaderAwareSplitter",

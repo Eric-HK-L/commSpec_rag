@@ -1,8 +1,6 @@
 """流式问答与语言兜底测试 — chat_stream / ask_stream / 语言兜底 / 合并翻译扩展."""
 
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from src.generator.llm_client import LLMClient
 from src.generator.pipeline import (
@@ -11,8 +9,8 @@ from src.generator.pipeline import (
     _split_for_stream,
 )
 from src.generator.prompt import build_rag_prompt
+from src.retriever.planner import RetrievalContext
 from src.retriever.search import RetrievalResult
-
 
 # ── chat_stream ──
 
@@ -175,8 +173,8 @@ class TestAskStream:
         pipe = self._make_pipeline(llm)
         pipe._query_cache.clear()
 
-        from hashlib import md5
-        key = md5("q".encode()).hexdigest()
+        from src.generator.pipeline import _build_cache_key
+        key = _build_cache_key("q")
         pipe._query_cache[key] = cached
 
         events = list(pipe.ask_stream("q"))
@@ -190,7 +188,6 @@ class TestAskStream:
 
     def test_stream_uses_chat_stream_and_buffers(self):
         """正常路径: mock chat_stream 产出 → chunk 事件按 32 字符粒度推送."""
-        from src.generator.pipeline import RAGResponse
         from src.retriever.search import RetrievalResult
 
         llm = MagicMock()
@@ -199,19 +196,19 @@ class TestAskStream:
         llm.chat_stream.return_value = iter(["x" * 80])  # 一次产出 80 字符
 
         pipe = self._make_pipeline(llm)
-        pipe._retrieve_context = MagicMock(return_value={
-            "query_lang": "en",
-            "search_query": "What is PDU session?",
-            "expanded_query": "PDU session concepts",
-            "results": [
+        pipe._retrieve_context = MagicMock(return_value=RetrievalContext(
+            query_lang="en",
+            search_query="What is PDU session?",
+            expanded_query="PDU session concepts",
+            results=[
                 RetrievalResult(
                     chunk_id=1, text="PDU session is a logical association between UE and network.",
                     score=0.9, spec_number="38300", parent_section_id="s1", parent_title="5G System",
                 )
             ],
-            "release_note": "",
-            "online_context": "",
-        })
+            release_note="",
+            online_context="",
+        ))
 
         events = list(pipe.ask_stream("What is PDU session?"))
         types = [e[0] for e in events]
@@ -233,19 +230,19 @@ class TestAskStream:
         llm.chat.return_value = "重试生成的中文回答"
 
         pipe = self._make_pipeline(llm)
-        pipe._retrieve_context = MagicMock(return_value={
-            "query_lang": "zh",
-            "search_query": "SLPP procedure",
-            "expanded_query": "SLPP procedure types",
-            "results": [
+        pipe._retrieve_context = MagicMock(return_value=RetrievalContext(
+            query_lang="zh",
+            search_query="SLPP procedure",
+            expanded_query="SLPP procedure types",
+            results=[
                 RetrievalResult(
                     chunk_id=1, text="SLPP procedure types.",
                     score=0.9, spec_number="38305", parent_section_id="s1", parent_title="t",
                 )
             ],
-            "release_note": "",
-            "online_context": "",
-        })
+            release_note="",
+            online_context="",
+        ))
 
         events = list(pipe.ask_stream("SLPP 过程有哪些类型？"))
         done = events[-1][1]
@@ -256,14 +253,14 @@ class TestAskStream:
     def test_no_results_yields_done_with_fallback_answer(self):
         llm = MagicMock()
         pipe = self._make_pipeline(llm)
-        pipe._retrieve_context = MagicMock(return_value={
-            "query_lang": "zh",
-            "search_query": "nonexistent",
-            "expanded_query": "nonexistent",
-            "results": [],
-            "release_note": "",
-            "online_context": "",
-        })
+        pipe._retrieve_context = MagicMock(return_value=RetrievalContext(
+            query_lang="zh",
+            search_query="nonexistent",
+            expanded_query="nonexistent",
+            results=[],
+            release_note="",
+            online_context="",
+        ))
         events = list(pipe.ask_stream("找不到的内容"))
         types = [e[0] for e in events]
         assert types == ["sources", "done"]
@@ -282,8 +279,8 @@ class TestTranslateAndExpand:
         llm = MagicMock()
         llm.chat.return_value = "TRANSLATED: What are the SLPP procedure types in TS 38.305?\nEXPANDED: SLPP procedure types sidelink positioning protocol 38.305"
         pipe = self._make_pipeline()
-        pipe._llm = llm
-        translated, expanded = pipe._translate_and_expand("38.305 中 SLPP 过程类型有哪些？", "zh")
+        pipe._planner._llm = llm
+        translated, expanded = pipe._planner._translate_and_expand("38.305 中 SLPP 过程类型有哪些？", "zh")
         assert "What are the SLPP procedure types" in translated
         assert "sidelink positioning protocol" in expanded
 
@@ -296,8 +293,8 @@ class TestTranslateAndExpand:
             "SLPP positioning protocol procedure",     # 回退: 扩展
         ]
         pipe = self._make_pipeline()
-        pipe._llm = llm
-        translated, expanded = pipe._translate_and_expand("38.305 中 SLPP 是什么？", "zh")
+        pipe._planner._llm = llm
+        translated, expanded = pipe._planner._translate_and_expand("38.305 中 SLPP 是什么？", "zh")
         assert translated == "What is SLPP in TS 38.305?"
         assert expanded == "SLPP positioning protocol procedure"
         assert llm.chat.call_count == 3
@@ -310,7 +307,7 @@ class TestTranslateAndExpand:
             "SLPP procedure",
         ]
         pipe = self._make_pipeline()
-        pipe._llm = llm
-        translated, expanded = pipe._translate_and_expand("38.305 中 SLPP 是什么？", "zh")
+        pipe._planner._llm = llm
+        translated, expanded = pipe._planner._translate_and_expand("38.305 中 SLPP 是什么？", "zh")
         assert translated == "What is SLPP in TS 38.305?"
         assert expanded == "SLPP procedure"

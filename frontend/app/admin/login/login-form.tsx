@@ -3,11 +3,6 @@
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-const VALID_USERNAME = "admin";
-const VALID_PASSWORD = "linux123";
-const AUTH_COOKIE = "admin_auth";
-const AUTH_VALUE = "commspec_admin_authenticated";
-
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -23,13 +18,21 @@ export function LoginForm() {
     setError("");
     setLoading(true);
 
-    if (username === VALID_USERNAME && password === VALID_PASSWORD) {
-      const expires = new Date();
-      expires.setDate(expires.getDate() + 1);
-      document.cookie = `${AUTH_COOKIE}=${AUTH_VALUE}; path=/; expires=${expires.toUTCString()}; SameSite=Lax`;
-      router.push(from);
-    } else {
-      setError("账号或密码错误");
+    try {
+      const res = await fetch("/api/v1/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      if (res.ok) {
+        router.push(from);
+        return;
+      }
+      const data = await res.json().catch(() => null);
+      setError(data?.detail ?? "登录失败，请检查账号密码");
+    } catch {
+      setError("网络错误，请稍后重试");
+    } finally {
       setLoading(false);
     }
   };
@@ -40,19 +43,37 @@ export function LoginForm() {
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-2 mb-3">
             <span className="w-9 h-9 rounded-lg bg-blue-600 dark:bg-blue-500 flex items-center justify-center">
-              <svg className="w-5 h-5 text-white" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <svg
+                className="w-5 h-5 text-white"
+                viewBox="0 0 12 12"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              >
                 <path d="M3 8V4m3 4V4m3 4V4M2 10h8" />
               </svg>
             </span>
-            <span className="font-extrabold text-xl text-gray-800 dark:text-gray-200">CommSpec</span>
-            <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 uppercase tracking-wider">RAG</span>
+            <span className="font-extrabold text-xl text-gray-800 dark:text-gray-200">
+              CommSpec
+            </span>
+            <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 uppercase tracking-wider">
+              RAG
+            </span>
           </div>
-          <h1 className="text-lg font-semibold text-gray-700 dark:text-gray-300">管理员登录</h1>
+          <h1 className="text-lg font-semibold text-gray-700 dark:text-gray-300">
+            管理员登录
+          </h1>
         </div>
 
-        <form onSubmit={handleSubmit} className="bg-white dark:bg-gray-900 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 space-y-4">
+        <form
+          onSubmit={handleSubmit}
+          className="bg-white dark:bg-gray-900 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 space-y-4"
+        >
           <div>
-            <label className="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-1.5">账号</label>
+            <label className="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-1.5">
+              账号
+            </label>
             <input
               type="text"
               value={username}
@@ -67,7 +88,9 @@ export function LoginForm() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-1.5">密码</label>
+            <label className="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-1.5">
+              密码
+            </label>
             <input
               type="password"
               value={password}

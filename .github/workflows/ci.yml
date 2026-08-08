@@ -44,13 +44,13 @@ jobs:
       - name: Create placeholder .env for CI
         run: cp .env.example .env
 
-      - name: Run unit tests (no Milvus required)
+      - name: Run unit tests (UT — no external dependencies)
         run: |
-          python -m pytest tests/test_generator/ tests/test_retriever/ tests/test_config/ tests/test_utils/ \
-            -v --tb=short \
-            --ignore=tests/test_ingestion/ \
-            --ignore=tests/test_api/ \
-            -k "not milvus and not e2e"
+          python -m pytest tests/unit -m unit -v --tb=short
+
+      - name: Run integration tests (BT — mocked Milvus/LLM)
+        run: |
+          python -m pytest tests/integration -m bt -v --tb=short
 
       - name: Check import integrity
         run: |

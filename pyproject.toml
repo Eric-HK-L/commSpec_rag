@@ -8,7 +8,7 @@ include = ["src", "src.*"]
 
 [project]
 name = "commspec-rag"
-version = "1.0.0"
+version = "0.3.0"
 description = "通信协议规范 RAG 融合项目 — 支持 3GPP + O-RAN 协议智能检索增强生成"
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
@@ -35,8 +35,10 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 addopts = ["-v", "--tb=short", "--strict-markers", "--ignore=tests/e2e/"]
 markers = [
+    "unit: 快速单元测试 (无外部依赖, 全部 mock)",
+    "bt: 集成测试 (真实模块编排 + mock 外部服务)",
+    "e2e: 端到端测试 (需要真实 Milvus / 完整服务栈)",
     "milvus: tests requiring Milvus connection",
-    "e2e: end-to-end tests requiring full stack",
     "slow: tests that take >1s",
 ]
 

@@ -14,8 +14,8 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from src.retriever.vector_store import VectorStore
 from src.config import settings
+from src.retriever.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 

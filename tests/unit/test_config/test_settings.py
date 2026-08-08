@@ -73,25 +73,29 @@ class TestResolvedEmbeddingDevice:
 
 
 class TestDefaults:
-    """默认值验证."""
+    """默认值验证 — 直接断言声明默认值, 免疫 .env/环境变量覆盖.
+
+    注: pymilvus 等依赖导入时会把 .env 注入 os.environ,
+    用 Settings() 构造验证默认值会受环境污染, 故直接检查字段声明.
+    """
+
+    @staticmethod
+    def _default(name: str):
+        return Settings.model_fields[name].default
 
     def test_log_level_default(self):
-        s = Settings()
-        assert s.log_level == "INFO"
+        assert self._default("log_level") == "INFO"
 
     def test_llm_defaults(self):
-        s = Settings()
-        assert s.llm_temperature == 0.0
-        assert s.llm_max_tokens == 2048
-        assert s.llm_timeout == 60.0
+        assert self._default("llm_temperature") == 0.0
+        assert self._default("llm_max_tokens") == 2048
+        assert self._default("llm_timeout") == 60.0
 
     def test_retrieval_defaults(self):
-        s = Settings()
-        assert s.max_search_results == 10
-        assert s.dense_top_k == 100
-        assert s.similarity_threshold == 0.7
+        assert self._default("max_search_results") == 20  # 对比类问题需要更多候选覆盖多规范
+        assert self._default("dense_top_k") == 100
+        assert self._default("similarity_threshold") == 0.7
 
     def test_vector_db_default(self):
-        s = Settings()
-        assert s.vector_db == "milvus"
-        assert s.milvus_port == 19530
+        assert self._default("vector_db") == "milvus"
+        assert self._default("milvus_port") == 19530

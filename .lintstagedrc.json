@@ -1,0 +1,4 @@
+{
+  "*.{js,jsx,ts,tsx,css,json,md}": "prettier --ignore-unknown --write",
+  "*.py": ".venv/bin/ruff check --fix"
+}

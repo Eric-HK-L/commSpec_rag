@@ -119,8 +119,8 @@ def classify_chunk(
 def _contains_table(text: str) -> bool:
     """检测文本是否包含 Markdown 表格 (pipe 或 grid)."""
     lines = text.split("\n")
-    pipe_sep_count = sum(1 for l in lines if PIPE_TABLE_SEP.match(l.strip()))
-    plus_count = sum(1 for l in lines if l.strip().startswith("+"))
+    pipe_sep_count = sum(1 for line in lines if PIPE_TABLE_SEP.match(line.strip()))
+    plus_count = sum(1 for line in lines if line.strip().startswith("+"))
     return pipe_sep_count >= 1 or plus_count >= 2
 
 
@@ -663,7 +663,7 @@ class HeaderAwareSplitter:
         # 检测窗口: 规范文档中表格前常有章节标题 + 一段说明,
         # 50 行覆盖了最极端的情况 (实测最长 prose 前缀 ~40 行)
         head = lines[: min(50, len(lines))]
-        plus_count = sum(1 for l in head if l.strip().startswith("+"))
+        plus_count = sum(1 for line in head if line.strip().startswith("+"))
         if plus_count >= 2:
             return self._split_grid_table_rows(text)
 
@@ -710,7 +710,7 @@ class HeaderAwareSplitter:
 
         # ── 4. 合成表头: 文档上下文 + 表格列头 ──
         header_lines = doc_context + lines[table_start:col_header_end]
-        header_bytes = sum(len(l.encode("utf-8")) + 1 for l in header_lines)
+        header_bytes = sum(len(line.encode("utf-8")) + 1 for line in header_lines)
 
         # ── 5. 收集数据行组 (所有 + 线为边界, 中间内容自动归组) ──
         # 规范文档表格的 Pandoc 输出极其异构:
@@ -727,14 +727,14 @@ class HeaderAwareSplitter:
             is_sep = line.strip().startswith("+")
             if is_sep:
                 # flush current group if it has actual content (not just borders)
-                if current and any(not l.strip().startswith("+") for l in current):
+                if current and any(not ln.strip().startswith("+") for ln in current):
                     groups.append(current)
                 current = [line]
             else:
                 current.append(line)
 
         # 最后一段: 仅含实际内容才保留 (尾部孤立的 +---+ 不生成无效组)
-        if current and any(not l.strip().startswith("+") for l in current):
+        if current and any(not ln.strip().startswith("+") for ln in current):
             groups.append(current)
 
         if not groups:
@@ -753,7 +753,7 @@ class HeaderAwareSplitter:
         buf_bytes = header_bytes
 
         for g in groups:
-            g_bytes = sum(len(l.encode("utf-8")) + 1 for l in g)
+            g_bytes = sum(len(ln.encode("utf-8")) + 1 for ln in g)
 
             if g_bytes > self.max_chunk_bytes:
                 # 合并单元格: 单行组超大 → 先 flush 已缓存行组
