@@ -460,9 +460,9 @@ class TestPipelineErrorRecovery:
         pipeline2 = RAGPipeline(vector_store=mock_store, llm_client=mock_llm)
         # 重写使其内部异常被捕获
         original_resolve = pipeline2._planner._resolve_cross_refs
-        def _failing_resolve(results, max_refs=5):
+        def _failing_resolve(results, max_refs=5, filter_expr=None):
             try:
-                return original_resolve(results, max_refs)
+                return original_resolve(results, max_refs, filter_expr=filter_expr)
             except Exception:
                 return results  # 降级返回原始结果
         pipeline2._planner._resolve_cross_refs = _failing_resolve
