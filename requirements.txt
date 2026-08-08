@@ -14,9 +14,14 @@ langchain-community==0.3.13
 openai==1.58.1
 
 # -------------------- 向量数据库 --------------------
-pymilvus==2.4.10
+# 2.6.16: 2.4.x 在 import 时依赖已移除的 pkg_resources (setuptools), 导致
+# Python 3.12+ 全新 venv (无 setuptools) 下 collection 直接失败 (CI exit 2)
+pymilvus==2.6.16
 # Elasticsearch（可选）
 # elasticsearch==8.17.0
+
+# -------------------- 检索 --------------------
+rank-bm25==0.2.2
 
 # -------------------- 嵌入模型 --------------------
 sentence-transformers==3.3.1

@@ -70,7 +70,10 @@ class TestAdminProtection:
     def test_tampered_cookie_rejected(self, client):
         client.post(LOGIN_URL, json={"username": "admin", "password": "test-pass-123"})
         token = client.cookies.get("admin_session")
-        forged = token[:-4] + ("0" if token[-1] != "0" else "1") + token[-3:]
+        # 翻转签名最后一个 hex 字符 — 必然与原始 token 不同, 避免旧逻辑
+        # (翻转 token[-1] 后覆盖 token[-4]) 在字符恰好相同时篡改无效的 flaky
+        last = token[-1]
+        forged = token[:-1] + ("0" if last != "0" else "1")
         client.cookies.set("admin_session", forged)
         resp = client.get(CONFIG_URL)
         assert resp.status_code == 401
