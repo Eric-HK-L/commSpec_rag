@@ -20,6 +20,16 @@ echo "  CommSpec RAG 一键启动"
 echo "========================================"
 echo ""
 
+# ── 0. 检查 .env ──
+if [ ! -f ".env" ]; then
+  echo "❌ 未找到 .env，请先执行: cp .env.example .env 并填入实际配置"
+  exit 1
+fi
+if ! grep -Eq '^ADMIN_PASSWORD=.+' .env; then
+  echo "  ⚠️  .env 未配置 ADMIN_PASSWORD，管理后台登录将不可用"
+  echo "     如需登录后台，请在 .env 添加: ADMIN_PASSWORD=<你的密码>"
+fi
+
 # ── 1. 检查 Docker ──
 echo "[1/5] 检查 Docker..."
 if ! command -v docker &>/dev/null; then
@@ -45,13 +55,19 @@ done
 docker compose -f deploy/docker-compose.yml up -d etcd minio milvus
 
 echo "  ⏳ 等待 Milvus 就绪..."
+MILVUS_READY=0
 for i in $(seq 1 45); do
   if docker compose -f deploy/docker-compose.yml exec -T milvus curl -sf http://localhost:9091/healthz &>/dev/null; then
     echo "  ✅ Milvus 已就绪"
+    MILVUS_READY=1
     break
   fi
   sleep 2
 done
+if [ "$MILVUS_READY" != "1" ]; then
+  echo "  ❌ Milvus 未在预期时间内就绪，请检查: docker compose -f deploy/docker-compose.yml ps"
+  exit 1
+fi
 
 # ── 3. 启动后端 ──
 echo ""
@@ -59,7 +75,7 @@ echo "[3/5] 启动后端 API 服务..."
 
 if [ -f "$BACKEND_PID" ]; then
   OLD_PID=$(cat "$BACKEND_PID")
-  if kill -0 "$OLD_PID" 2>/dev/null; then
+  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
     echo "  ⚠️  后端已在运行 (PID: $OLD_PID)，跳过"
   else
     rm -f "$BACKEND_PID"
@@ -77,13 +93,19 @@ if [ ! -f "$BACKEND_PID" ]; then
 fi
 
 echo "  ⏳ 等待 API 就绪 (http://localhost:8000)..."
-for i in $(seq 1 20); do
-  if curl -sf http://localhost:8000/api/v1/health &>/dev/null; then
+API_READY=0
+for i in $(seq 1 45); do
+  if curl -sf http://localhost:8000/api/v1/health 2>/dev/null | grep -q '"ready"'; then
     echo "  ✅ API 已就绪"
+    API_READY=1
     break
   fi
   sleep 2
 done
+if [ "$API_READY" != "1" ]; then
+  echo "  ❌ API 未在预期时间内就绪，请查看日志: $BACKEND_LOG"
+  exit 1
+fi
 
 # ── 4. 启动前端 ──
 echo ""
@@ -91,7 +113,7 @@ echo "[4/5] 启动前端 (Next.js 开发服务器)..."
 
 if [ -f "$FRONTEND_PID" ]; then
   OLD_PID=$(cat "$FRONTEND_PID")
-  if kill -0 "$OLD_PID" 2>/dev/null; then
+  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
     echo "  ⚠️  前端已在运行 (PID: $OLD_PID)，跳过"
   else
     rm -f "$FRONTEND_PID"
@@ -111,13 +133,19 @@ if [ ! -f "$FRONTEND_PID" ]; then
 fi
 
 echo "  ⏳ 等待前端就绪 (http://localhost:3000)..."
-for i in $(seq 1 20); do
+FRONTEND_READY=0
+for i in $(seq 1 30); do
   if curl -sf http://localhost:3000 &>/dev/null; then
     echo "  ✅ 前端已就绪"
+    FRONTEND_READY=1
     break
   fi
   sleep 2
 done
+if [ "$FRONTEND_READY" != "1" ]; then
+  echo "  ❌ 前端未在预期时间内就绪，请查看日志: $FRONTEND_LOG"
+  exit 1
+fi
 
 # ── 5. 完成 ──
 echo ""

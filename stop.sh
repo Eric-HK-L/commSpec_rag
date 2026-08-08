@@ -20,7 +20,7 @@ echo ""
 echo "[1/3] 停止后端 API 服务..."
 if [ -f "$BACKEND_PID" ]; then
   BACKEND=$(cat "$BACKEND_PID")
-  if kill -0 "$BACKEND" 2>/dev/null; then
+  if [ -n "$BACKEND" ] && kill -0 "$BACKEND" 2>/dev/null; then
     kill "$BACKEND" 2>/dev/null || true
     # 等待进程退出
     for i in $(seq 1 10); do
@@ -30,7 +30,7 @@ if [ -f "$BACKEND_PID" ]; then
       sleep 1
     done
     # 若仍未退出，强制终止
-    if kill -0 "$BACKEND" 2>/dev/null; then
+    if [ -n "$BACKEND" ] && kill -0 "$BACKEND" 2>/dev/null; then
       kill -9 "$BACKEND" 2>/dev/null || true
     fi
     echo "  ✅ 后端已停止 (PID: $BACKEND)"
@@ -52,7 +52,7 @@ echo ""
 echo "[2/3] 停止前端 (Next.js)..."
 if [ -f "$FRONTEND_PID" ]; then
   FRONTEND=$(cat "$FRONTEND_PID")
-  if kill -0 "$FRONTEND" 2>/dev/null; then
+  if [ -n "$FRONTEND" ] && kill -0 "$FRONTEND" 2>/dev/null; then
     kill "$FRONTEND" 2>/dev/null || true
     for i in $(seq 1 10); do
       if ! kill -0 "$FRONTEND" 2>/dev/null; then
@@ -60,7 +60,7 @@ if [ -f "$FRONTEND_PID" ]; then
       fi
       sleep 1
     done
-    if kill -0 "$FRONTEND" 2>/dev/null; then
+    if [ -n "$FRONTEND" ] && kill -0 "$FRONTEND" 2>/dev/null; then
       kill -9 "$FRONTEND" 2>/dev/null || true
     fi
     echo "  ✅ 前端已停止 (PID: $FRONTEND)"

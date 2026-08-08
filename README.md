@@ -174,6 +174,18 @@ cd frontend && npm run dev
 管理后台默认账号为 `admin`，密码通过环境变量 `ADMIN_PASSWORD` 配置
 （未配置时后台登录禁用）。生产环境请务必同时配置 `ADMIN_SESSION_SECRET` 与 `API_KEYS`。
 
+### 一键启停
+
+```bash
+# 一键启动 Milvus + 后端 + 前端（含就绪等待与失败检测）
+./start.sh
+
+# 一键停止（保留数据卷，下次启动复用）
+./stop.sh
+```
+
+> 提示：`start.sh` 会校验 `.env` 是否存在以及 `ADMIN_PASSWORD` 是否已配置。
+
 ### Docker 一键部署
 
 ```bash
