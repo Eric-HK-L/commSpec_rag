@@ -56,15 +56,15 @@ jobs:
       - name: Check import integrity
         run: |
           python -c "
-from src.generator.prompt import build_rag_prompt, _TAXONOMY_EXTRA_PROMPT
-from src.generator.i18n import detect_language
-from src.retriever.cross_ref import extract_references
-from src.retriever.search import RetrievalResult
-from src.config.settings import Settings, IngestionConfig
-from src.config import settings, ingestion_config
-from src.ingestion.splitter import HeaderAwareSplitter, classify_chunk
-print('All core imports OK')
-"
+          from src.generator.prompt import build_rag_prompt, _TAXONOMY_EXTRA_PROMPT
+          from src.generator.i18n import detect_language
+          from src.retriever.cross_ref import extract_references
+          from src.retriever.search import RetrievalResult
+          from src.config.settings import Settings, IngestionConfig
+          from src.config import settings, ingestion_config
+          from src.ingestion.splitter import HeaderAwareSplitter, classify_chunk
+          print('All core imports OK')
+          "
 
       - name: Validate eval test set (dry-run)
         if: always()
