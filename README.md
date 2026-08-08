@@ -245,6 +245,17 @@ pytest tests/unit -m unit
 pytest tests/integration -m bt
 ```
 
+### 🔥 全栈冒烟测试
+
+服务启动后（`./start.sh`），可一键验证前后端关键链路：
+
+```bash
+./scripts/smoke_test.sh              # 默认 localhost:8000 / localhost:3000
+./scripts/smoke_test.sh http://host:8000 http://host:3000
+```
+
+覆盖项：健康检查（含 chunk 数）、无过滤检索、`release+series` 过滤一致性（校验 BM25 过滤）、真实 LLM 问答、管理后台认证（未配置 `ADMIN_PASSWORD` 时按 403 校验）、前端 `/` 与 `/admin`。全部通过退出码为 0。
+
 ## 📄 License
 
 [BSD-3-Clause](LICENSE)
