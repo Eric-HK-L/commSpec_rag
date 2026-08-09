@@ -190,10 +190,11 @@ def build_rag_prompt(
             非空时在 user 消息末尾加强输出语言指令 — user 指令比 system 更有效,
             避免 LLM 因英文上下文输出英文再触发回译 (省一次完整生成).
     """
-    # 分类列举问题需要更多上下文覆盖
+    # 分类列举问题需要更多上下文覆盖 — 从 10 提到 14 (原翻倍到 20,
+    # 过大导致 DeepSeek prefill >60s 超时空流; 保守折中保持覆盖同时降延迟)
     _is_taxonomy = is_taxonomy_query(query)
     if _is_taxonomy:
-        max_context_chunks = min(max_context_chunks * 2, len(retrieved_chunks))
+        max_context_chunks = min(14, len(retrieved_chunks))
 
     context_parts: list[str] = []
     for i, chunk in enumerate(retrieved_chunks[:max_context_chunks]):
@@ -210,20 +211,23 @@ def build_rag_prompt(
         context_parts.append(f"{header}\n{chunk.text}")
 
         # 附加相邻 chunk 上下文 — 解决表格/列表内容碎片化问题 (Phase 5 Layer D)
+        # 从 4×500 收紧到 2×300: 相邻是 prompt 最大占比项 (实测 69%),
+        # 收紧后 token 下降 ~48% 而覆盖语义损失有限 (相邻本为补充而非命中)
         adjacent = getattr(chunk, 'adjacent_chunks', None)
         if adjacent:
             adj_lines = []
-            for j, t in enumerate(adjacent[:4]):
-                adj_lines.append(f"  [{i+1}.{j+1}] {_grid_table_to_pipe(t)[:500]}")
+            for j, t in enumerate(adjacent[:2]):
+                adj_lines.append(f"  [{i+1}.{j+1}] {_grid_table_to_pipe(t)[:300]}")
             if adj_lines:
                 context_parts.append("  （相邻上下文：同文档邻近段落, 非检索命中但语义相关）\n" + "\n".join(adj_lines))
 
         # small-to-big 父章节上下文 — 命中子 chunk 附带所属 section 完整文本 (控制总量)
+        # 从 1500 收紧到 800: 父章节仅为理解背景, 截断头部已含章节主旨
         parent_ctx = getattr(chunk, 'parent_context', '')
         if parent_ctx:
             context_parts.append(
                 "  （父章节上下文：该片段所属章节的完整文本, 供理解上下文）\n"
-                + _grid_table_to_pipe(parent_ctx)[:1500]
+                + _grid_table_to_pipe(parent_ctx)[:800]
             )
 
         chunk.text = original_text
