@@ -206,6 +206,9 @@ def _normalize_chunk_sizes(all_chunks: list, splitter: HeaderAwareSplitter) -> l
                 c.section_number, c.section_title, c.section_path,
                 c.chunk_index,
             )
+            for s in sub:
+                s.parent_text = c.parent_text
+                s.parent_chunk_id = c.parent_chunk_id
             safe.extend(sub)
     logger.info(
         "chunk 规范化完成: %d → %d (+%d), 最大 %dB",

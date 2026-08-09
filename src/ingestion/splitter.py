@@ -199,7 +199,25 @@ class HeaderAwareSplitter:
         merged = self._merge_small_chunks(chunks)
         for i, c in enumerate(merged):
             c.chunk_index = i
+        self._finalize_parent_ids(merged)
         return merged
+
+    @staticmethod
+    def _finalize_parent_ids(chunks: list[Chunk]) -> None:
+        """合并重编号后修正 parent_chunk_id — 同 section 连续 chunk 共享首个子 chunk 索引.
+
+        parent_text 非空表示该 chunk 属于被切分的 section; 连续且 parent_text
+        相同的 chunk 属于同一 section, 共享该 section 首个子 chunk 的索引.
+        """
+        run_start: int | None = None
+        for i, c in enumerate(chunks):
+            if not c.parent_text:
+                c.parent_chunk_id = 0
+                run_start = None
+                continue
+            if run_start is None or c.parent_text != chunks[i - 1].parent_text:
+                run_start = i
+            c.parent_chunk_id = run_start
 
     # ── 章节树构建 ──
 
@@ -307,6 +325,8 @@ class HeaderAwareSplitter:
                     section_number, section_title, section_path,
                     chunk_idx, doc_type,
                 )
+                for sc in sub_chunks:
+                    sc.parent_text = content[:4096]
                 chunks.extend(sub_chunks)
                 chunk_idx += len(sub_chunks)
 

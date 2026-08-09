@@ -37,6 +37,9 @@ class SearchResult:
     content_type: str = ""       # "parameter_table" | "definition" | "procedure" | "overview"
     spec_role: str = ""          # "authoritative" | "supporting" | "overview"
     topic_domain: str = ""       # "phy_layer" | "mac_layer" | "rrc_layer" | "ran_arch"
+    # small-to-big 父上下文: 所属 section 完整文本 + 该 section 首个子 chunk 索引
+    parent_text: str = ""
+    parent_chunk_id: int = 0
 
     def to_context_str(self, index: int = 0) -> str:
         """将检索结果格式化为注入 LLM 上下文的字符串."""
@@ -67,6 +70,9 @@ class Chunk:
     content_type: str = ""       # "parameter_table" | "definition" | "procedure" | "overview"
     spec_role: str = ""          # "authoritative" | "supporting" | "overview"
     topic_domain: str = ""       # "phy_layer" | "mac_layer" | "rrc_layer" | "ran_arch"
+    # small-to-big 父上下文: 所属 section 完整文本 + 该 section 首个子 chunk 索引
+    parent_text: str = ""
+    parent_chunk_id: int = 0
 
     # ── 序列化: 字段定义与序列化同住一处, 新增字段零同步成本 ──
     # embedding 是运行时计算的向量, 不参与磁盘序列化

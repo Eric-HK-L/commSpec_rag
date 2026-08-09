@@ -289,3 +289,54 @@ class TestMergeSmallChunksEndToEnd:
 class TestMinChunkConfig:
     def test_default_min_chunk_chars(self):
         assert HeaderAwareSplitter().min_chunk_chars == 300
+
+
+class TestParentTextOnSubChunks:
+    """small-to-big 摄入侧数据 — 切分的子 chunk 携带所属 section 完整文本."""
+
+    def _split_long_section(self, content: str) -> list[Chunk]:
+        splitter = HeaderAwareSplitter(
+            max_chunk_chars=400, prose_max_chars=400,
+            chunk_overlap_chars=0, min_chunk_chars=0,
+        )
+        return splitter._split_long_section(
+            content, "doc", 38, "38.331", "R18",
+            "5", "RRC Procedures", "5.3", "Setup", "5 > 5.3 Setup",
+            0, "3gpp",
+        )
+
+    def test_sub_chunks_carry_section_text(self):
+        p1 = _para("Procedure description one. ", 500)
+        p2 = _para("Procedure description two. ", 500)
+        doc = "# 5.1 Test Section\n\n" + p1 + "\n\n" + p2
+        splitter = HeaderAwareSplitter(
+            max_chunk_chars=400, prose_max_chars=400,
+            chunk_overlap_chars=0, min_chunk_chars=0,
+        )
+        chunks = splitter.split_document(doc)
+        assert len(chunks) >= 2
+        for c in chunks:
+            assert c.parent_text == doc[:4096]
+            assert "Procedure description one" in c.parent_text
+
+    def test_short_section_has_no_parent(self):
+        """整段即 section (未切分) → parent_text 留空, 避免自我复制."""
+        splitter = HeaderAwareSplitter(min_chunk_chars=0)
+        doc = "# 5.1 Short Section\n\nShort content that fits in one chunk."
+        chunks = splitter.split_document(doc)
+        assert len(chunks) == 1
+        assert chunks[0].parent_text == ""
+        assert chunks[0].parent_chunk_id == 0
+
+    def test_parent_chunk_id_points_to_section_first_subchunk(self):
+        p1 = _para("Procedure description one. ", 500)
+        p2 = _para("Procedure description two. ", 500)
+        doc = "# 5.1 Test Section\n\n" + p1 + "\n\n" + p2
+        splitter = HeaderAwareSplitter(
+            max_chunk_chars=400, prose_max_chars=400,
+            chunk_overlap_chars=0, min_chunk_chars=0,
+        )
+        chunks = splitter.split_document(doc)
+        assert len(chunks) >= 2
+        # 同 section 所有子 chunk 共享首个子 chunk 索引 (重编号后)
+        assert all(c.parent_chunk_id == chunks[0].chunk_index for c in chunks)

@@ -34,6 +34,9 @@ class RetrievalResult:
     content_type: str = ""       # "parameter_table" | "definition" | "procedure" | "overview"
     spec_role: str = ""          # "authoritative" | "supporting" | "overview"
     topic_domain: str = ""       # "phy_layer" | "mac_layer" | "rrc_layer" | "ran_arch"
+    # small-to-big 父上下文 (来自 Milvus parent_text / parent_chunk_id 字段)
+    parent_text: str = ""
+    parent_chunk_id: int = 0
     # 扩展上下文：同文档相邻 chunk
     adjacent_chunks: list[str] = field(default_factory=list)
 
@@ -57,6 +60,8 @@ class RetrievalResult:
             content_type=sr.content_type,
             spec_role=sr.spec_role,
             topic_domain=sr.topic_domain,
+            parent_text=getattr(sr, "parent_text", ""),
+            parent_chunk_id=getattr(sr, "parent_chunk_id", 0),
         )
         src_tag = getattr(sr, "_source_tag", None)
         if src_tag:

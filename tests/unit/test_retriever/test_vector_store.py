@@ -28,6 +28,8 @@ def _full_chunk() -> Chunk:
         content_type="procedure",
         spec_role="authoritative",
         topic_domain="ran_arch",
+        parent_text="The PDU Session Resource Setup procedure enables the gNB to configure radio resources for a PDU session.",
+        parent_chunk_id=42,
     )
 
 
@@ -93,3 +95,22 @@ class TestOrchestratorInterimCompatibility:
         assert restored[0].spec_number == "38.413"
         assert restored[1].text == "minimal"
         assert restored[1].chunk_index == 0
+
+
+class TestChunkParentFields:
+    """small-to-big 父上下文字段 — 存储/序列化 round-trip."""
+
+    def test_defaults_empty(self):
+        c = Chunk(text="sub chunk")
+        assert c.parent_text == ""
+        assert c.parent_chunk_id == 0
+
+    def test_roundtrip_preserves_parent(self):
+        original = Chunk(
+            text="sub chunk", doc_id="d", spec_number="38.413",
+            parent_text="Parent section full text",
+            parent_chunk_id=7,
+        )
+        restored = Chunk.from_dict(original.to_dict())
+        assert restored.parent_text == "Parent section full text"
+        assert restored.parent_chunk_id == 7

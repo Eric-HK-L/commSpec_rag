@@ -7,12 +7,14 @@
   - 截断处不产生 UTF-8 解码错误
 """
 
+from unittest.mock import MagicMock
+
 from src.retriever.milvus_store import (
     MilvusStore,
     _matches_filter_expr,
     _safe_truncate_bytes,
 )
-from src.retriever.vector_store import SearchResult
+from src.retriever.vector_store import Chunk, SearchResult
 
 
 class TestSafeTruncateBytes:
@@ -116,3 +118,35 @@ class TestRrfFuse:
         fused = MilvusStore._rrf_fuse(dense, sparse, 2)
         # 等权时双路单 rank1 得分相同, 顺序由输入决定
         assert len(fused) == 2
+
+
+class TestInsertBatchParentFields:
+    """_insert_batch 同步 small-to-big parent 字段 (16→18 列)."""
+
+    def test_writes_parent_fields_and_truncates(self):
+        store = MilvusStore.__new__(MilvusStore)
+        store._collection = MagicMock()
+        chunk = Chunk(
+            text="sub chunk", doc_id="d", spec_number="38.413",
+            parent_section_id="8.3", parent_title="Setup",
+            parent_chunk_id=3,
+            parent_text="父上下文" * 1500,  # 4500 bytes > VARCHAR 4096 上限
+        )
+        store._insert_batch([chunk])
+
+        data = store._collection.insert.call_args[0][0]
+        assert len(data) == 18, "schema 16 列 + parent_chunk_id + parent_text = 18 列"
+        assert data[16] == [3], "parent_chunk_id (INT64) 应写入第 17 列"
+        stored = data[17][0]
+        assert len(stored.encode("utf-8")) <= 4096, "parent_text 必须 ≤ 4096 字节"
+        assert stored.endswith("…"), "超限时应在语义边界截断并附加标记"
+
+    def test_empty_parent_writes_defaults(self):
+        store = MilvusStore.__new__(MilvusStore)
+        store._collection = MagicMock()
+        store._insert_batch([Chunk(text="plain chunk", doc_id="d")])
+
+        data = store._collection.insert.call_args[0][0]
+        assert len(data) == 18
+        assert data[16] == [0]
+        assert data[17] == [""]

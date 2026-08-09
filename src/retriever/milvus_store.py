@@ -209,6 +209,8 @@ class MilvusStore(VectorStore):
             FieldSchema(name="content_type", dtype=DataType.VARCHAR, max_length=32),
             FieldSchema(name="spec_role", dtype=DataType.VARCHAR, max_length=32),
             FieldSchema(name="topic_domain", dtype=DataType.VARCHAR, max_length=32),
+            FieldSchema(name="parent_chunk_id", dtype=DataType.INT64),
+            FieldSchema(name="parent_text", dtype=DataType.VARCHAR, max_length=4096),
         ]
 
         schema = CollectionSchema(fields, description="3GPP 规范检索集合 (Dense)")
@@ -287,6 +289,8 @@ class MilvusStore(VectorStore):
             [],  # content_type
             [],  # spec_role
             [],  # topic_domain
+            [],  # parent_chunk_id
+            [],  # parent_text
         ]
 
         for c in chunks:
@@ -307,6 +311,8 @@ class MilvusStore(VectorStore):
             data[13].append(c.content_type[:32] if c.content_type else "")
             data[14].append(c.spec_role[:32] if c.spec_role else "")
             data[15].append(c.topic_domain[:32] if c.topic_domain else "")
+            data[16].append(c.parent_chunk_id if c.parent_chunk_id else 0)
+            data[17].append(_safe_truncate_bytes(c.parent_text, 4096) if c.parent_text else "")
 
         try:
             self._collection.insert(data)
@@ -447,6 +453,7 @@ class MilvusStore(VectorStore):
                 "section_number", "section_title", "section_path",
                 "doc_type",
                 "content_type", "spec_role", "topic_domain",
+                "parent_chunk_id", "parent_text",
             ],
         }
         if filter_expr:
@@ -475,6 +482,8 @@ class MilvusStore(VectorStore):
                     content_type=entity.get("content_type", ""),
                     spec_role=entity.get("spec_role", ""),
                     topic_domain=entity.get("topic_domain", ""),
+                    parent_chunk_id=entity.get("parent_chunk_id", 0),
+                    parent_text=entity.get("parent_text", ""),
                 ))
         return output
 
@@ -626,6 +635,8 @@ class MilvusStore(VectorStore):
                     content_type=r.content_type,
                     spec_role=r.spec_role,
                     topic_domain=r.topic_domain,
+                    parent_chunk_id=r.parent_chunk_id,
+                    parent_text=r.parent_text,
                 ))
             elif key in sparse_map:
                 r = sparse_map[key]
