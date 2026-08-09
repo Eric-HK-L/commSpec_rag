@@ -54,6 +54,18 @@ class TestCompareVersions:
         # "i10" vs "f10" — same number (10), sort by letter
         assert compare_versions("f10", "i10") == -1
 
+    def test_dotted_release_version(self):
+        # 点号格式发布版本 ("18.4.0") 与字母格式内部版本 ("i30") 混合比较 — 不应抛异常
+        # "18.4.0" 数字部分 1840 > "i30" 的 30 → 返回 1
+        assert compare_versions("18.4.0", "i30") == 1
+        assert compare_versions("i30", "18.4.0") == -1
+
+    def test_dotted_version_comparison(self):
+        # 两个点号版本号按数字部分比较
+        assert compare_versions("18.4.0", "18.0.0") == 1
+        assert compare_versions("18.0.0", "18.1.0") == -1
+        assert compare_versions("18.4.0", "18.4.0") == 0
+
 
 class TestMakeKey:
 

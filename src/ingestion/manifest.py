@@ -80,8 +80,9 @@ def compare_versions(v1: str | None, v2: str | None) -> int:
         return 1
 
     def _numeric(s: str) -> int:
-        # 提取字母后的数字部分: "i10" → 10, "f60" → 60
-        digits = re.sub(r"[a-z]", "", s, flags=re.IGNORECASE)
+        # 提取数字部分: "i10" → 10, "f60" → 60
+        # 点号格式发布版本 "18.4.0" → 1840 (点号移除, 保持段位权重)
+        digits = re.sub(r"[^0-9]", "", s)
         return int(digits) if digits else 0
 
     n1, n2 = _numeric(v1), _numeric(v2)
