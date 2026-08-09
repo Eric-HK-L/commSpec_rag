@@ -72,6 +72,35 @@ class TestResolvedEmbeddingDevice:
         assert device in ("cpu", "cuda", "mps")
 
 
+class TestApiKeyResolution:
+    """LLM API key 解析 — 显式值优先, 空/占位符时从密钥文件回退读取.
+
+    场景: .env 不再保存明文密钥, 生产密钥存放于独立文件 (默认 ~/ds-api-key).
+    """
+
+    def test_explicit_key_wins(self, tmp_path):
+        key_file = tmp_path / "key"
+        key_file.write_text("file-key")
+        s = Settings(llm_api_key="explicit-key", llm_api_key_file=str(key_file))
+        assert s.llm_api_key == "explicit-key"
+
+    def test_reads_from_file_when_empty(self, tmp_path):
+        key_file = tmp_path / "key"
+        key_file.write_text("file-key\n")
+        s = Settings(llm_api_key="", llm_api_key_file=str(key_file))
+        assert s.llm_api_key == "file-key"
+
+    def test_placeholder_replaced_by_file(self, tmp_path):
+        key_file = tmp_path / "key"
+        key_file.write_text("file-key")
+        s = Settings(llm_api_key="sk-your-key-here", llm_api_key_file=str(key_file))
+        assert s.llm_api_key == "file-key"
+
+    def test_missing_file_keeps_empty(self, tmp_path):
+        s = Settings(llm_api_key="", llm_api_key_file=str(tmp_path / "nope"))
+        assert s.llm_api_key == ""
+
+
 class TestDefaults:
     """默认值验证 — 直接断言声明默认值, 免疫 .env/环境变量覆盖.
 

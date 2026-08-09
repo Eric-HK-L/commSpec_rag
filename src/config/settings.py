@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 # ── MPS 内存水位线 ── (必须在 torch 加载前设置)
 # 默认 HIGH=1.0 允许 Metal 使用全部系统内存, 设为 0.5 上限 50%
@@ -35,12 +35,28 @@ class Settings(BaseSettings):
 
     # ── LLM 配置 ──
     llm_base_url: str = "https://api.openai.com/v1"
-    llm_api_key: str = "sk-your-key-here"
+    # API key: 优先 .env 的 LLM_API_KEY; 为空/占位符时自动从 llm_api_key_file 读取,
+    # 避免把真实密钥写进 .env 或提交到版本库
+    llm_api_key: str = ""
+    # 密钥文件路径 (支持 ~ 展开), 默认读取本机 DeepSeek 密钥文件
+    llm_api_key_file: str = "~/ds-api-key"
     llm_model: str = "gpt-4o-mini"
     llm_temperature: float = 0.0
     llm_max_tokens: int = 2048
     llm_timeout: float = 60.0
     llm_max_retries: int = 2  # OpenAI 客户端对 429/5xx 的自动重试次数
+
+    @model_validator(mode="after")
+    def _resolve_llm_api_key(self) -> "Settings":
+        """API key 回退: .env 为空或占位符时从 llm_api_key_file 读取."""
+        if self.llm_api_key and self.llm_api_key != "sk-your-key-here":
+            return self
+        key_path = Path(self.llm_api_key_file).expanduser()
+        if key_path.is_file():
+            key = key_path.read_text(encoding="utf-8").strip()
+            if key:
+                self.llm_api_key = key
+        return self
 
     # ── 嵌入模型 ──
     embedding_provider: Literal["api", "local"] = "local"  # 默认本地 BGE-M3
