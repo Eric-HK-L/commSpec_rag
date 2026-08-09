@@ -57,6 +57,41 @@ class TestClassifyChunkContentType:
         result = classify_chunk(text, "38.101", "1 Scope")
         assert result["content_type"] == "overview"
 
+    def test_table_reference_caption_detected(self):
+        """仅含表格编号标题 (Table 6.3.3.2-1, 无 pipe/grid 结构) → parameter_table.
+
+        38.211 §6.3.3 PRACH preamble 表: 标题不含 "table" 单词, 但 chunk 以
+        "Table 6.3.3.2-1: PRACH preamble formats" 表号开头 — 必须识别为参数表.
+        """
+        text = (
+            "Table 6.3.3.2-1: PRACH preamble formats.\n"
+            "The format of the random access preamble is defined by the parameters "
+            "listed in the table above."
+        )
+        result = classify_chunk(text, "38.211", "6.3.3.2 PRACH preamble formats")
+        assert result["content_type"] == "parameter_table"
+
+    def test_table_reference_inline_detected(self):
+        """正文引用表格编号 (see Table 6.3.3.2-1) → parameter_table."""
+        text = (
+            "The subcarrier spacing for the PRACH preamble is determined by the "
+            "configuration in Table 6.3.3.2-1, and shall be as specified therein."
+        )
+        result = classify_chunk(text, "38.211", "6.3.3 PRACH preamble generation")
+        assert result["content_type"] == "parameter_table"
+
+    def test_table_reference_underscore_separator(self):
+        """表格编号支持 en-dash/em-dash 分隔符 (Table 4.1–1 / Table 4.1—1)."""
+        text = "The mapping is given in Table 4.1–1 and Table 4.1—1 of this specification."
+        result = classify_chunk(text, "38.211", "4.1 Mapping")
+        assert result["content_type"] == "parameter_table"
+
+    def test_plain_table_word_not_detected(self):
+        """无编号的 "table" 单词引用 (非 3GPP 表号格式) 不应误判为参数表."""
+        text = "The parameters of the transmission are given in table below."
+        result = classify_chunk(text, "38.211", "6.3.3 PRACH preamble generation")
+        assert result["content_type"] == "overview"
+
 
 # ════════════════════════════════════════════════════════════════
 # classify_chunk — spec_role 检测

@@ -64,6 +64,9 @@ TABLE_KEYWORDS = ["table", "Table"]
 DEFINITION_KEYWORDS = ["definition", "general", "principles", "overview", "architecture"]
 PROCEDURE_KEYWORDS = ["procedure", "procedures", "call flow", "message sequence"]
 
+# 3GPP 表格编号引用: "Table 6.3.3.2-1" / "Table 4.1-1" (支持 - – — 分隔符)
+TABLE_REFERENCE_RE = re.compile(r"Table\s+\d+(?:\.\d+)+\s*[-–—]\s*\d+", re.IGNORECASE)
+
 
 def classify_chunk(
     text: str,
@@ -75,8 +78,14 @@ def classify_chunk(
     Returns:
         {"content_type": ..., "spec_role": ..., "topic_domain": ...}
     """
-    # 1. content_type
-    if _contains_table(text):
+    # 1. content_type — 表格判定基于 section 上下文 (结构 + 表头特征 + 表格编号):
+    #    a) 直接检测 chunk 文本中的 pipe/grid 表格结构 (_contains_table)
+    #    b) section 内表格编号引用 (Table 6.3.3.2-1) — 标题不含 "table" 但以
+    #       表号开头的参数表 chunk (如 38.211 §6.3.3 PRACH preamble 表)
+    #    c) 父章节标题含 table 表头特征
+    if _contains_table(text) or _contains_table_reference(text) or any(
+        kw in parent_title for kw in TABLE_KEYWORDS
+    ):
         content_type = "parameter_table"
     elif any(kw in parent_title.lower() for kw in DEFINITION_KEYWORDS):
         content_type = "definition"
@@ -122,6 +131,15 @@ def _contains_table(text: str) -> bool:
     pipe_sep_count = sum(1 for line in lines if PIPE_TABLE_SEP.match(line.strip()))
     plus_count = sum(1 for line in lines if line.strip().startswith("+"))
     return pipe_sep_count >= 1 or plus_count >= 2
+
+
+def _contains_table_reference(text: str) -> bool:
+    """检测文本是否引用 3GPP 表格编号 (如 "Table 6.3.3.2-1").
+
+    参数表 section 常以表号标题开头 (Table X.Y.Z-W: caption) 或正文引用
+    (see Table X.Y.Z-W); 这类 chunk 即使表格结构被截断也应归为参数表.
+    """
+    return TABLE_REFERENCE_RE.search(text) is not None
 
 
 # ── 章节树节点 ──
