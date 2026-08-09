@@ -32,6 +32,7 @@ from src.generator.release_aware import (
     detect_release_intent,
 )
 from src.retriever.cross_ref import _deduplicate_refs, extract_references
+from src.retriever.glossary import expand_abbreviations
 from src.retriever.graph_expander import GraphExpander
 from src.retriever.milvus_store import _escape_milvus_expr
 from src.retriever.multi_hop import MultiHopRetriever, needs_multi_hop
@@ -362,8 +363,13 @@ class RetrievalPlanner:
             logger.debug("查询扩展缓存命中: %.60s", query)
             return cached
 
+        # 缩写展开 — 缓存 key 基于原始查询 (缓存兼容), 展开结果喂给 LLM 扩展
+        abbr_query = expand_abbreviations(query)
+        if abbr_query != query:
+            logger.debug("缩写展开: %.60s → %.120s", query, abbr_query)
+
         try:
-            messages = build_query_expansion_prompt(query, history)
+            messages = build_query_expansion_prompt(abbr_query, history)
             expanded = self._llm.chat(messages)
             if expanded and len(expanded) > 5:
                 with self._expand_lock:
@@ -406,13 +412,15 @@ class RetrievalPlanner:
             return cached
 
         try:
-            user_content = f"用户查询: {query}"
+            # 缩写展开 — 中英混合查询中的英文缩写同样展开, 让 LLM 看到全称
+            abbr_query = expand_abbreviations(query)
+            user_content = f"用户查询: {abbr_query}"
             if history and len(history) >= 2:
                 history_lines = ["## 对话历史 (用于理解当前问题的上下文)"]
                 for msg in history[-6:]:
                     role = "用户" if msg["role"] == "user" else "助手"
                     history_lines.append(f"{role}: {msg['content'][:200]}")
-                history_lines.append(f"\n## 当前问题 (需要翻译+扩展为英文检索查询)\n{query}")
+                history_lines.append(f"\n## 当前问题 (需要翻译+扩展为英文检索查询)\n{abbr_query}")
                 user_content = "\n".join(history_lines)
             result = self._llm.chat(
                 [

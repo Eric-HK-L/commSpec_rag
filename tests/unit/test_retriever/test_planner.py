@@ -5,6 +5,7 @@ import threading
 import numpy as np
 from cachetools import TTLCache
 
+from src.retriever.glossary import expand_abbreviations
 from src.retriever.planner import (
     RetrievalPlanner,
     _history_fingerprint,
@@ -102,6 +103,97 @@ class TestExpandQuery:
 
         out = planner._expand_query("pdu session")
         assert out == "pdu session"
+
+
+class TestExpandAbbreviations:
+    """缩写展开 — 词边界/大小写不敏感/中文混合/已展开形式跳过."""
+
+    def test_query_with_rrc_expanded_to_full_name(self):
+        out = expand_abbreviations("RRC connection establishment procedure")
+        assert "RRC (Radio Resource Control)" in out
+
+    def test_case_insensitive(self):
+        assert expand_abbreviations("rrc setup") == "RRC (Radio Resource Control) setup"
+        assert expand_abbreviations("RrC setup") == "RRC (Radio Resource Control) setup"
+
+    def test_no_abbreviation_unchanged(self):
+        q = "What is the handover procedure between base stations?"
+        assert expand_abbreviations(q) == q
+
+    def test_word_boundary_no_partial_match(self):
+        # "RRC" 不应误匹配 "RRCR" / "SIB" 不匹配 "SIB1" (数字邻接)
+        assert expand_abbreviations("RRCR setup") == "RRCR setup"
+        assert expand_abbreviations("SIB1 scheduling") == "SIB1 scheduling"
+
+    def test_chinese_mixed_query(self):
+        # 中英混合查询中的英文缩写同样展开 (含无空格混排)
+        out = expand_abbreviations("RRC 连接建立流程")
+        assert "RRC (Radio Resource Control) 连接建立流程" in out
+        out2 = expand_abbreviations("RRC连接建立流程")
+        assert "RRC (Radio Resource Control)连接建立流程" in out2
+
+    def test_already_expanded_not_double_expanded(self):
+        # 已展开形式 "RRC (Radio Resource Control)" 与 "(RRC)" 均不再重复展开
+        q = "RRC (Radio Resource Control) connection setup"
+        assert expand_abbreviations(q) == q
+        q2 = "the (RRC) connection"
+        assert expand_abbreviations(q2) == "the (RRC) connection"
+
+    def test_multiple_abbreviations_all_expanded(self):
+        out = expand_abbreviations("PDCP RRC MAC protocol stack")
+        assert "PDCP (Packet Data Convergence Protocol)" in out
+        assert "RRC (Radio Resource Control)" in out
+        assert "MAC (Medium Access Control)" in out
+
+
+class TestExpandQueryAbbreviation:
+    """缩写展开在 _expand_query 中的接入 — LLM 之前/precise 跳过/缓存兼容."""
+
+    def test_llm_receives_abbr_expanded_query(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from src.config import settings
+        monkeypatch.setattr(settings, "query_expansion_enabled", True)
+
+        planner = _make_planner()
+        planner._llm = MagicMock()
+        planner._llm.chat.return_value = "RRC connection establishment procedure NGAP"
+        planner._expand_query("RRC connection setup")
+
+        sent_messages = planner._llm.chat.call_args[0][0]
+        assert any(
+            "Radio Resource Control" in m["content"] for m in sent_messages
+        ), "LLM 扩展前应看到缩写展开后的查询"
+
+    def test_precise_query_skips_abbr_expansion(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from src.config import settings
+        monkeypatch.setattr(settings, "query_expansion_enabled", True)
+
+        planner = _make_planner()
+        planner._llm = MagicMock()
+        q = "TS 38.413 §8.3.1 RRC connection setup"
+        assert planner._expand_query(q) == q
+        planner._llm.chat.assert_not_called()
+
+    def test_cache_key_uses_original_query(self, monkeypatch):
+        """缩写展开在缓存 key 计算之后 — 原始查询命中缓存, 不破坏既有缓存."""
+        from unittest.mock import MagicMock
+
+        from src.config import settings
+        monkeypatch.setattr(settings, "query_expansion_enabled", True)
+
+        planner = _make_planner()
+        planner._llm = MagicMock()
+        planner._llm.chat.return_value = "RRC (Radio Resource Control) setup NGAP"
+
+        # 第一次: 缩写展开后喂给 LLM, 结果按原始查询缓存
+        r1 = planner._expand_query("rrc setup")
+        # 第二次: 大小写归一化后命中缓存, LLM 只调用一次
+        r2 = planner._expand_query("RRC setup")
+        assert r1 == r2
+        assert planner._llm.chat.call_count == 1
 
 
 class TestGetQueryEmbeddings:
