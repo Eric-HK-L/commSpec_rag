@@ -755,6 +755,7 @@ def main():
         table_max_chars=ingestion_config.table_max_chars,
         prose_max_chars=ingestion_config.prose_max_chars,
         max_chunk_hard_chars=ingestion_config.max_chunk_chars,
+        min_chunk_chars=ingestion_config.min_chunk_chars,
     )
 
     # 双 extractor: marked 直接读数据集, original 走 pandoc

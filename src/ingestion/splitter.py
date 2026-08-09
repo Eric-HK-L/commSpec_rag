@@ -158,6 +158,7 @@ class HeaderAwareSplitter:
         table_max_chars: int = 5000,
         prose_max_chars: int = 1500,
         max_chunk_hard_chars: int = 8000,  # BGE-M3 8192 token 安全上限
+        min_chunk_chars: int = 300,  # 小于此值的正文碎片并入相邻 chunk
     ):
         self.max_chunk = max_chunk_chars
         self.overlap = chunk_overlap_chars
@@ -169,6 +170,7 @@ class HeaderAwareSplitter:
         # BGE-M3 8192 tokens → 最坏情况 (密集 ASN.1/数字表) ~1 char/token
         # 8000 chars 确保即使最极端密度也不超 token 限制
         self.max_chunk_hard = max_chunk_hard_chars
+        self.min_chunk_chars = min_chunk_chars
 
     def split_document(
         self,
@@ -193,7 +195,11 @@ class HeaderAwareSplitter:
             # 无标题 → 降级为字符分块
             chunks = self._split_by_chars(text, doc_id, series, spec_number, release, doc_type)
 
-        return chunks
+        # 小碎片合并 pass — 向前并入优先, 表格/公式原子块保护; 合并后重编号
+        merged = self._merge_small_chunks(chunks)
+        for i, c in enumerate(merged):
+            c.chunk_index = i
+        return merged
 
     # ── 章节树构建 ──
 
@@ -549,26 +555,29 @@ class HeaderAwareSplitter:
                         chunks.append(sub)
                         idx += 1
             else:
-                # 超长纯文本：段落边界切分
-                paragraphs = seg_text.split("\n\n")
+                # 超长纯文本：段落边界切分 + overlap (相邻 chunk 共享句尾上下文)
+                paragraphs = [p.strip() for p in seg_text.split("\n\n") if p.strip()]
                 buf = ""
-                for para in paragraphs:
-                    para = para.strip()
-                    if not para:
-                        continue
+                for i, para in enumerate(paragraphs):
                     if len(buf) + len(para) <= max_limit:
                         buf += ("\n\n" if buf else "") + para
-                    else:
-                        if buf.strip():
-                            for sub in self._fit_byte_limit(
-                                buf.strip(), doc_id, series, spec_number,
-                                release, parent_id, parent_title,
-                                section_number, section_title, section_path,
-                                idx, doc_type,
-                            ):
-                                chunks.append(sub)
-                                idx += 1
-                        buf = para
+                        continue
+                    # 落盘当前 buffer — 追加下一段首部作为 overlap (句界切断)
+                    overlap_limit = min(self.overlap, max_limit - len(buf))
+                    overlap_tail = self._take_overlap(para, overlap_limit)
+                    if buf.strip():
+                        chunk_text = buf.strip()
+                        if overlap_tail:
+                            chunk_text = f"{chunk_text}\n\n{overlap_tail}"
+                        for sub in self._fit_byte_limit(
+                            chunk_text, doc_id, series, spec_number,
+                            release, parent_id, parent_title,
+                            section_number, section_title, section_path,
+                            idx, doc_type,
+                        ):
+                            chunks.append(sub)
+                            idx += 1
+                    buf = para
                 if buf.strip():
                     for sub in self._fit_byte_limit(
                         buf.strip(), doc_id, series, spec_number,
@@ -579,6 +588,74 @@ class HeaderAwareSplitter:
                         chunks.append(sub)
 
         return chunks
+
+    # ── 小碎片合并 + overlap 工具 ──
+
+    @staticmethod
+    def _take_overlap(text: str, limit: int) -> str:
+        """取文本前 limit 字符作为 chunk 尾部 overlap — 按句界切断.
+
+        边界优先级: 句末 (.  。) → 分句 (; ) → 换行 → 词 (空格) → 硬切.
+        返回的 overlap 与下一 chunk 首部内容重叠, 提供共享语义上下文.
+        """
+        if limit <= 0 or not text:
+            return ""
+        window = text[:limit]
+        for sep in (". ", "。", "; ", "\n", " "):
+            idx = window.rfind(sep)
+            if idx >= max(limit // 2, 1):
+                return window[: idx + len(sep)].rstrip()
+        return window
+
+    @staticmethod
+    def _is_atomic_chunk(text: str) -> bool:
+        """检测 chunk 是否为表格/公式原子块 — 合并时必须保护, 不参与合并."""
+        if _contains_table(text):
+            return True
+        stripped = text.strip()
+        return stripped.startswith("$$") and "$$" in stripped[2:]
+
+    def _merge_small_chunks(self, chunks: list[Chunk]) -> list[Chunk]:
+        """合并过小 chunk — 向前并入优先, 原子块 (表格/公式) 永不参与.
+
+        规则:
+        - 正文 chunk 长度 < min_chunk_chars → 视为碎片
+        - 碎片优先并入前一个非原子 chunk (向前); 否则并入下一个非原子 chunk
+        - 原子块 chunk 既不被并入也不作为合并目标 (表格完整性保护)
+        - 合并后长度不超 max_chunk_hard (BGE-M3 8192 token 安全上限)
+        """
+        if self.min_chunk_chars <= 0 or len(chunks) < 2:
+            return chunks
+
+        def _is_fragment(c: Chunk) -> bool:
+            return len(c.text) < self.min_chunk_chars and not self._is_atomic_chunk(c.text)
+
+        result: list[Chunk] = []
+        for c in chunks:
+            if (
+                _is_fragment(c)
+                and result
+                and not self._is_atomic_chunk(result[-1].text)
+                and len(result[-1].text) + len(c.text) <= self.max_chunk_hard
+            ):
+                result[-1].text = f"{result[-1].text}\n\n{c.text}"
+                continue
+            result.append(c)
+
+        # 前向兜底: 剩余碎片并入下一个非原子 chunk
+        i = 0
+        while i < len(result) - 1:
+            if (
+                _is_fragment(result[i])
+                and not self._is_atomic_chunk(result[i + 1].text)
+                and len(result[i].text) + len(result[i + 1].text) <= self.max_chunk_hard
+            ):
+                result[i + 1].text = f"{result[i].text}\n\n{result[i + 1].text}"
+                del result[i]
+                continue
+            i += 1
+
+        return result
 
     # ── 字节上限自适应拆分 ──
 

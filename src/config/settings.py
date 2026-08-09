@@ -266,7 +266,8 @@ class IngestionConfig(BaseSettings):
     # 分块策略
     chunk_mode: Literal["fixed", "dynamic"] = "dynamic"
     chunk_size: int = 1024               # fixed 模式的字符上限 (fallback)
-    chunk_overlap: int = 100
+    chunk_overlap: int = 200             # 段落切分 overlap 尾部 (dynamic 主路径生效)
+    min_chunk_chars: int = 300           # 小于此值的正文碎片并入相邻 chunk (原子块除外)
 
     # dynamic 模式 — 内容类型感知上限
     table_max_chars: int = 5000          # 表格 chunk 上限（比正文更大）

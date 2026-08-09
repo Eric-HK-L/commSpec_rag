@@ -69,6 +69,7 @@ class IngestionOrchestrator:
             table_max_chars=ingestion_config.table_max_chars,
             prose_max_chars=ingestion_config.prose_max_chars,
             max_chunk_hard_chars=ingestion_config.max_chunk_chars,
+            min_chunk_chars=ingestion_config.min_chunk_chars,
         )
 
     # ── 全流程 ──
