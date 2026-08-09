@@ -66,6 +66,10 @@ out/
 .cursorignore
 .cursorindexingignore
 
+# ==================== Agent ====================
+# oh-my-opencode
+.omo/
+
 # ==================== 项目数据（不入库） ====================
 data/raw/*
 data/processed/*
@@ -106,3 +110,5 @@ offline/
 # ==================== Logs ====================
 logs/
 *.log
+# eval 运行时 checkpoint (可重建, 不入库)
+tests/eval/eval_checkpoint.json
