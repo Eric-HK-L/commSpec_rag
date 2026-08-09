@@ -127,7 +127,6 @@ class Settings(BaseSettings):
     max_search_results: int = 20  # 对比类问题需要更多候选覆盖多规范
     dense_top_k: int = 100
     bm25_top_k: int = 100
-    similarity_threshold: float = 0.7
     enable_nn_router: bool = False
     enable_online_search: bool = False
     # 在线搜索补充配置

@@ -36,15 +36,15 @@ CommSpec RAG 是一个**生产级 3GPP 通信标准专用 RAG 系统**，提供�
 
 ### 技术栈
 
-| 层级 | 选型 |
-|---|---|
-| API 框架 | FastAPI + Uvicorn |
-| LLM 集成 | OpenAI SDK（base_url + api_key + model 三参数统一切换） |
-| 嵌入模型 | BGE-M3（多语言，1024-dim，稠密+稀疏双向量） |
-| 向量数据库 | Milvus 2.4+（Dense + BM25 混合检索；BGE-M3 原生 sparse 向量待迁移）|
-| 文档处理 | Pandoc（DOCX → Markdown）|
-| 前端 | Next.js 16（React 19 + Tailwind CSS 4）+ react-markdown |
-| 部署 | Docker Compose（etcd + MinIO + Milvus + API + Frontend）|
+| 层级       | 选型                                                                |
+| ---------- | ------------------------------------------------------------------- |
+| API 框架   | FastAPI + Uvicorn                                                   |
+| LLM 集成   | OpenAI SDK（base_url + api_key + model 三参数统一切换）             |
+| 嵌入模型   | BGE-M3（多语言，1024-dim，稠密+稀疏双向量）                         |
+| 向量数据库 | Milvus 2.4+（Dense + BM25 混合检索；BGE-M3 原生 sparse 向量待迁移） |
+| 文档处理   | Pandoc（DOCX → Markdown）                                           |
+| 前端       | Next.js 16（React 19 + Tailwind CSS 4）+ react-markdown             |
+| 部署       | Docker Compose（etcd + MinIO + Milvus + API + Frontend）            |
 
 ### 数据目录结构
 
@@ -183,15 +183,16 @@ tests/
 
 **核心配置项**：
 
-| 分类 | 关键项 | 说明 |
-|---|---|---|
-| LLM | `llm_base_url`, `llm_api_key`, `llm_model` | OpenAI 兼容三参数，覆盖公司自建/公有云/Ollama |
-| 嵌入 | `embedding_provider`, `embedding_device`, `local_embedding_model` | api/local 切换，auto/cuda/mps/cpu 设备选择 |
-| 向量库 | `milvus_host`, `milvus_port`, `milvus_collection_name` | Milvus 连接参数 |
-| 摄入 | `chunk_size`, `chunk_overlap`, `documents_dir` | DOCX 文档路径 + 分块参数 |
-| 检索 | `dense_top_k`, `bm25_top_k`, `similarity_threshold` | 混合检索参数 |
+| 分类   | 关键项                                                            | 说明                                          |
+| ------ | ----------------------------------------------------------------- | --------------------------------------------- |
+| LLM    | `llm_base_url`, `llm_api_key`, `llm_model`                        | OpenAI 兼容三参数，覆盖公司自建/公有云/Ollama |
+| 嵌入   | `embedding_provider`, `embedding_device`, `local_embedding_model` | api/local 切换，auto/cuda/mps/cpu 设备选择    |
+| 向量库 | `milvus_host`, `milvus_port`, `milvus_collection_name`            | Milvus 连接参数                               |
+| 摄入   | `chunk_size`, `chunk_overlap`, `documents_dir`                    | DOCX 文档路径 + 分块参数                      |
+| 检索   | `dense_top_k`, `bm25_top_k`                                       | 混合检索参数                                  |
 
 **智能属性**：
+
 - `resolved_embedding_device` — `auto` 时自动检测平台（NVIDIA→cuda, Apple Silicon→cpu 安全降级）
 - `documents_abs_dir` / `log_abs_file` — 相对路径 → 绝对路径
 
@@ -201,8 +202,8 @@ tests/
 
 当前统一使用 DOCX 从零摄入（`bulk_ingest.py`），直接从 3GPP DOCX 源文件提取、分块、嵌入、入库。
 
-| 模式 | 配置值 | 数据来源 | 适用场景 |
-|---|---|---|---|
+| 模式         | 配置值         | 数据来源                | 适用场景                   |
+| ------------ | -------------- | ----------------------- | -------------------------- |
 | **从零构建** | `from_scratch` | 本地 3GPP DOCX → Milvus | 完全可控分块策略，生产默认 |
 
 #### 3.2.2 核心模块
@@ -211,18 +212,20 @@ tests/
 
 **[splitter.py](file://src/ingestion/splitter.py)** — 三层自适应分块引擎，零信息丢失：
 
-| 层级 | 机制 | 触发条件 | 作用 |
-|------|------|----------|------|
-| **Layer 1: 标题感知** | 按 `#/##/###` 层级切分，保留父章节路径 | 默认 | 结构化语义分块 |
-| **Layer 2: 内容感知拆分** | Grid Table 行组拆分 / HTML `<tr>` 拆分 / 换行拆分 | chunk > 55KB | 在语义边界精确切割巨型表格 |
-| **Layer 3: 字节截断兜底** | `_safe_truncate_bytes` 语义边界截断 | 极少数不可拆分内容 | 确保入库不崩溃 |
+| 层级                      | 机制                                              | 触发条件           | 作用                       |
+| ------------------------- | ------------------------------------------------- | ------------------ | -------------------------- |
+| **Layer 1: 标题感知**     | 按 `#/##/###` 层级切分，保留父章节路径            | 默认               | 结构化语义分块             |
+| **Layer 2: 内容感知拆分** | Grid Table 行组拆分 / HTML `<tr>` 拆分 / 换行拆分 | chunk > 55KB       | 在语义边界精确切割巨型表格 |
+| **Layer 3: 字节截断兜底** | `_safe_truncate_bytes` 语义边界截断               | 极少数不可拆分内容 | 确保入库不崩溃             |
 
 **Grid Table 智能拆分**：
+
 - 无状态边界收集算法，统一处理标准表、合并单元格表、`+===+` 子表头三种异构 Pandoc 输出
 - 每个子表自包含完整列头 + 文档上下文（heading + prose），独立可检索
 - 实测：967 个超限 chunk → 3,697 个安全子表，99.4% ≤ 55KB，行覆盖率 99.5%
 
 **崩溃防护**：
+
 - 提取阶段 `_normalize_chunk_sizes` 确保 checkpoint 已是干净尺寸（≤55KB）
 - 嵌入阶段 `_safe_truncate_bytes` 双重兜底
 - Milvus VARCHAR 65535 硬限制，55KB 提供 10KB+ 安全边距
@@ -232,6 +235,7 @@ tests/
 **[embedder.py](file://src/ingestion/embedder.py)** — 批量嵌入生成器，支持云端 API 和本地 BGE 模型双后端，带重试和断点续传。
 
 **[mps_embedder.py](file://src/ingestion/mps_embedder.py)** — Apple Silicon MPS GPU 安全嵌入方案：
+
 - 使用 Python `spawn` 而非 `fork`（Apple Metal 框架 fork-unsafe）
 - 父进程永不 import torch，零 GPU 状态
 - **workers=1（硬约束）**：Apple MPS 不支持多进程同时使用 GPU，多进程
@@ -269,6 +273,7 @@ tests/
 **[vector_store.py](file://src/retriever/vector_store.py)** — 抽象接口，定义 `SearchResult` / `Chunk` 数据结构和 `VectorStore` ABC。
 
 **[milvus_store.py](file://src/retriever/milvus_store.py)** — Milvus 2.4+ 实现：
+
 - Dense 检索：IVF_FLAT 索引，COSINE 度量，1024-dim
 - BM25 检索：Python rank-bm25 实现，`rebuild_bm25_from_collection()` 从 Milvus 全量重建
 - `hybrid_search()` — 双路检索 + Python 侧 RRF 融合（`_rrf_fuse()` 静态方法）
@@ -277,16 +282,19 @@ tests/
 **[bm25_index.py](file://src/retriever/bm25_index.py)** — Python BM25 索引器，支持构建/保存/加载/搜索，持久化到 `{DATA_DIR}/vectors/bm25_index.pkl`。
 
 **[search.py](file://src/retriever/search.py)** — `HybridRetriever` 统一入口：
+
 - Milvus 原生 `hybrid_search()` 优先
 - BM25 不可用时自动降级 Dense-only
 - `search_with_context()` 预留相邻 chunk 扩展
 
 **[cross_ref.py](file://src/retriever/cross_ref.py)** — 3GPP 交叉引用解析：
+
 - 正则识别：TS 38.413 / TR 38.901 / §5.2.1 / Table 7.3.1-1 / Figure 4.1-1
 - 去重后对每个引用发起二次检索，补充被引文档上下文
 - 递归深度限制 MAX_REF_DEPTH=2 防止无限循环
 
 **[multi_hop.py](file://src/retriever/multi_hop.py)** — 多跳检索迭代 Agent：
+
 - Round 1: 标准检索 → LLM 缺口分析 → 生成子查询
 - Round 2-3: 并行二次检索 → 合并去重
 - `needs_multi_hop()` 启发式：spec_number 多样性 < 0.25 时触发
@@ -350,30 +358,36 @@ tests/
 #### 3.4.2 核心模块
 
 **[pipeline.py](file://src/generator/pipeline.py)** — `RAGPipeline` 主编排器：
+
 - `ask(query)` — 完整 RAG 问答（12 步全链路）
 - `search(query)` — 仅检索
 - `_warmup()` — 预热嵌入模型避免首次查询延迟
 
 **[llm_client.py](file://src/generator/llm_client.py)** — `LLMClient`：
+
 - `chat(messages)` — OpenAI SDK 统一调用，`base_url + api_key + model` 三参数切换
 - `embed(texts)` — 根据 `embedding_provider` 自动选择云端 API 或本地 BGE 模型
 
 **[i18n.py](file://src/generator/i18n.py)** — 多语言支持：
+
 - `detect_language()` — 字符集检测（CJK → zh, Hangul → ko, 其他 → en）
 - `translate_to_english()` — LLM 查询翻译（保留 3GPP 术语）
 - `translate_from_english()` — LLM 回答回译
 
 **[release_aware.py](file://src/generator/release_aware.py)** — Release 版本感知：
+
 - `detect_release_intent()` — 正则匹配 "R17 vs R18" / "Release 18"
 - `filter_by_release()` / `group_by_release()` — 按版本过滤/分组
 - `build_release_context()` — 构建版本感知上下文和提示词
 
 **[verifier.py](file://src/generator/verifier.py)** — 幻觉验证：
+
 - Claim 提取（TS 编号正则 + LLM 结构化输出）
 - 支撑校验（语义相似度 + 关键词交叉验证）
 - 无支撑比例 > 阈值时追加全局警告
 
 **[prompt.py](file://src/generator/prompt.py)** — 提示词模板：
+
 - `build_rag_prompt()` — 层级上下文注入 + Release 注释 + 在线上下文
 - `build_query_expansion_prompt()` — 查询改写/扩展
 
@@ -381,23 +395,23 @@ tests/
 
 #### REST API 端点
 
-| 端点 | 方法 | 说明 |
-|---|---|---|
-| `/api/v1/health` | GET | 服务健康检查 + chunk 统计 |
-| `/api/v1/search` | POST | Dense+BM25 混合检索 |
-| `/api/v1/search/count` | POST | 检索结果计数 |
-| `/api/v1/search/batch` | POST | 批量并行检索（最多 10 条） |
-| `/api/v1/ask` | POST | RAG 问答（含来源+验证） |
-| `/api/v1/ask/stream` | POST | SSE 流式生成（逐 token 推送） |
-| `/api/v1/documents` | GET | 文档列表（分页+筛选） |
-| `/api/v1/documents/{id}` | GET | 文档详情 |
-| `/api/v1/documents/{id}/chunks` | GET | 文档 Chunk 列表 |
-| `/api/v1/documents/{id}` | DELETE | 删除文档 |
-| `/api/v1/stats` | GET | 系统统计（Release/Series 分布） |
-| `/api/v1/feedback` | POST | 提交 👍/👎 用户反馈 |
-| `/api/v1/feedback` | GET | 反馈列表查询（分页+筛选） |
-| `/api/v1/feedback/stats` | GET | 反馈汇总统计（好评率） |
-| `/metrics` | GET | Prometheus 指标 |
+| 端点                            | 方法   | 说明                            |
+| ------------------------------- | ------ | ------------------------------- |
+| `/api/v1/health`                | GET    | 服务健康检查 + chunk 统计       |
+| `/api/v1/search`                | POST   | Dense+BM25 混合检索             |
+| `/api/v1/search/count`          | POST   | 检索结果计数                    |
+| `/api/v1/search/batch`          | POST   | 批量并行检索（最多 10 条）      |
+| `/api/v1/ask`                   | POST   | RAG 问答（含来源+验证）         |
+| `/api/v1/ask/stream`            | POST   | SSE 流式生成（逐 token 推送）   |
+| `/api/v1/documents`             | GET    | 文档列表（分页+筛选）           |
+| `/api/v1/documents/{id}`        | GET    | 文档详情                        |
+| `/api/v1/documents/{id}/chunks` | GET    | 文档 Chunk 列表                 |
+| `/api/v1/documents/{id}`        | DELETE | 删除文档                        |
+| `/api/v1/stats`                 | GET    | 系统统计（Release/Series 分布） |
+| `/api/v1/feedback`              | POST   | 提交 👍/👎 用户反馈             |
+| `/api/v1/feedback`              | GET    | 反馈列表查询（分页+筛选）       |
+| `/api/v1/feedback/stats`        | GET    | 反馈汇总统计（好评率）          |
+| `/metrics`                      | GET    | Prometheus 指标                 |
 
 #### 中间件栈
 
@@ -416,6 +430,7 @@ Request → CORS → RequestLogging → Prometheus → APIKey → Router → Res
 #### 监控与可观测性
 
 **[monitoring.py](file://src/utils/monitoring.py)** — Prometheus 指标：
+
 - `record_search()` / `record_ask()` / `record_llm_call()` — 延迟/调用量/错误率
 - `record_multi_hop()` / `record_error()` — 高级检索/异常计数
 
@@ -424,6 +439,7 @@ Request → CORS → RequestLogging → Prometheus → APIKey → Router → Res
 前端采用 **DeepSeek 式对话界面** 设计，与搜索引擎式布局有本质区别：
 
 **核心设计**：
+
 - **对话式消息流** — 用户消息蓝色气泡居右，助手回答居左，Markdown 富文本渲染（表格/代码块/列表）
 - **底部输入栏** — 固定于页面底部，支持 Enter 发送、Shift+Enter 换行
 - **流式回答** — SSE 逐 token 推送，实时 Markdown 渲染
@@ -433,16 +449,17 @@ Request → CORS → RequestLogging → Prometheus → APIKey → Router → Res
 
 **页面路由**：
 
-| 路由 | 页面 | 说明 |
-|---|---|---|
-| `/` | HomePage | 对话式主界面（Hero → 消息流） |
-| `/admin` | AdminPage | 管理仪表盘（统计 + 快速操作） |
-| `/admin/search` | SearchTestPage | 检索测试台（检索结果 + LLM 回答双栏对比） |
-| `/admin/documents` | DocListPage | 文档管理（筛选/分页/删除） |
-| `/admin/documents/[id]` | DocDetailPage | 文档详情（元数据 + Chunk 列表） |
-| `/documents` | DocBrowserPage | 公开文档浏览（只读） |
+| 路由                    | 页面           | 说明                                      |
+| ----------------------- | -------------- | ----------------------------------------- |
+| `/`                     | HomePage       | 对话式主界面（Hero → 消息流）             |
+| `/admin`                | AdminPage      | 管理仪表盘（统计 + 快速操作）             |
+| `/admin/search`         | SearchTestPage | 检索测试台（检索结果 + LLM 回答双栏对比） |
+| `/admin/documents`      | DocListPage    | 文档管理（筛选/分页/删除）                |
+| `/admin/documents/[id]` | DocDetailPage  | 文档详情（元数据 + Chunk 列表）           |
+| `/documents`            | DocBrowserPage | 公开文档浏览（只读）                      |
 
 **技术栈**：
+
 - Next.js 16.2 + React 19.2 + TypeScript
 - Tailwind CSS 4 + 明暗主题（CSS 变量 + next-themes 风格 context）
 - react-markdown v10 — 助手回答富文本渲染
@@ -473,6 +490,7 @@ frontend/
 ### 3.7 工具层 (`src/utils/`)
 
 **[helpers.py](file://src/utils/helpers.py)** — 硬件检测 + 平台适配：
+
 - `detect_platform()` — 检测 NVIDIA / Apple Silicon / 其他
 - `get_embedding_device_config()` — 返回设备推荐配置
 
@@ -485,6 +503,7 @@ frontend/
 #### MCP 工具
 
 **[mcp/tools.py](file://src/api/mcp/tools.py)** + **[mcp/server.py](file://src/api/mcp/server.py)** — 暴露 4 个 MCP 工具供 AI Agent 调用：
+
 - `search_specifications` — 规范检索
 - `get_specification_details` — 规范详情
 - `ask_3gpp_expert` — RAG 专家问答
@@ -493,10 +512,12 @@ frontend/
 ### 3.6 工具层 (`src/utils/`)
 
 **[helpers.py](file://src/utils/helpers.py)** — 硬件检测：
+
 - `get_hardware_info()` — 识别 OS、CPU 架构、GPU 类型、统一内存
 - `get_best_device()` — 自动选择最优嵌入设备（NVIDIA→cuda, Apple Silicon→cpu 安全降级）
 
 **[monitoring.py](file://src/utils/monitoring.py)** — Prometheus 指标导出：
+
 - `record_search()` / `record_ask()` / `record_llm_call()` — 延迟/调用量/错误率
 - `record_multi_hop()` / `record_error()` — 高级检索/异常计数
 
@@ -618,11 +639,11 @@ Milvus 2.4+ 原生支持 Dense + BM25 双路检索，FAISS 不支持 BM25。在 
 
 ### 支持的部署平台
 
-| 平台 | 嵌入设备 | Docker 架构 |
-|---|---|---|
-| Linux x86_64 (Intel/AMD) | `cpu` | `linux/amd64` |
-| NVIDIA GB10 (ARM64 + Blackwell) | `auto` → `cuda` | `linux/arm64` |
-| macOS Apple Silicon | `mps` (spawn) / `cpu` (安全) | 本地开发 |
+| 平台                            | 嵌入设备                     | Docker 架构   |
+| ------------------------------- | ---------------------------- | ------------- |
+| Linux x86_64 (Intel/AMD)        | `cpu`                        | `linux/amd64` |
+| NVIDIA GB10 (ARM64 + Blackwell) | `auto` → `cuda`              | `linux/arm64` |
+| macOS Apple Silicon             | `mps` (spawn) / `cpu` (安全) | 本地开发      |
 
 ### 离线部署
 
@@ -634,12 +655,12 @@ Milvus 2.4+ 原生支持 Dense + BM25 双路检索，FAISS 不支持 BM25。在 
 
 本系统的架构设计参考了 5 个开源 3GPP RAG 项目的核心优势：
 
-| 参考项目 | 融入本项目的关键设计 |
-|---|---|
-| **SpecPilot** | Docling DOCX→MD 双转换链，按 Release×Series 二维矩阵组织输出 |
-| **gpp-RAG-app** | ETL 流水线（4 步）设计，Milvus 集成模式，Docker Compose 部署 |
-| **Telco-RAG** | 双阶段检索（Dense + NN Router），在线/离线混合，Next.js 前端架构 |
-| **Chat3GPP** | RRF 融合算法（`1/(k+rank+1)`），LangChain RAG 集成，提示词构造模式 |
-| **3GPP MCP Server** | MCP 工具设计模式，智能缓存策略（<500ms），TSpec-LLM 对接 |
+| 参考项目            | 融入本项目的关键设计                                               |
+| ------------------- | ------------------------------------------------------------------ |
+| **SpecPilot**       | Docling DOCX→MD 双转换链，按 Release×Series 二维矩阵组织输出       |
+| **gpp-RAG-app**     | ETL 流水线（4 步）设计，Milvus 集成模式，Docker Compose 部署       |
+| **Telco-RAG**       | 双阶段检索（Dense + NN Router），在线/离线混合，Next.js 前端架构   |
+| **Chat3GPP**        | RRF 融合算法（`1/(k+rank+1)`），LangChain RAG 集成，提示词构造模式 |
+| **3GPP MCP Server** | MCP 工具设计模式，智能缓存策略（<500ms），TSpec-LLM 对接           |
 
 > **相关文档**：[硬件兼容性指南](./hardware-compatibility.md) | [离线部署手册](../deployment/offline-deployment.md)

@@ -123,7 +123,6 @@ class TestDefaults:
     def test_retrieval_defaults(self):
         assert self._default("max_search_results") == 20  # 对比类问题需要更多候选覆盖多规范
         assert self._default("dense_top_k") == 100
-        assert self._default("similarity_threshold") == 0.7
 
     def test_vector_db_default(self):
         assert self._default("vector_db") == "milvus"

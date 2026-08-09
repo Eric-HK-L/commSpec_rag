@@ -79,6 +79,7 @@ class CrossEncoderReranker:
                 model_id,
                 device=device,
                 trust_remote_code=True,  # BGE-Reranker 需要此选项
+                max_length=1024,  # 模型训练用 1024, 默认 512 会截断长 chunk
             )
         return self._model
 
@@ -102,8 +103,9 @@ class CrossEncoderReranker:
             return []
 
         k = top_k or self._top_k
-        if len(candidates) <= k:
-            # 候选数不超过 top_k, 直接返回 (避免无意义推理)
+        # 仅当使用实例默认 top_k 时, 候选数不足才跳过推理 (性能优化);
+        # 显式传入 top_k (如融合场景的全池打分) 必须执行推理以得到分数
+        if top_k is None and len(candidates) <= k:
             return candidates
 
         # 构建 (query, doc) 对

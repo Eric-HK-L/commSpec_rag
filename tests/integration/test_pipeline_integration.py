@@ -274,6 +274,69 @@ class TestPipelineSearch:
         if len(results) > 0:
             assert results[0].spec_number == "38.413"
 
+    def test_search_fusion_full_pool_no_early_exit(self, mock_llm, monkeypatch):
+        """候选池 >top_k 时不早退 — RRF 靠前但 reranker 排 21+ 的 chunk 存活.
+
+        mock store 返回 31 条候选 (top_k=20), 验证 _rerank 对全池打分融合,
+        而不是在 reranker top-20 截断后把真阳性直接丢弃.
+        """
+        from src.config import settings
+        from src.retriever.vector_store import SearchResult
+
+        monkeypatch.setattr(settings, "reranker_enabled", True)
+        monkeypatch.setattr(settings, "max_search_results", 20)
+        monkeypatch.setattr(settings, "reranker_top_k", 20)
+        monkeypatch.setattr(settings, "enable_online_search", False)
+        monkeypatch.setattr(settings, "query_expansion_enabled", False)  # 跳过 LLM 扩展, 保持确定性
+
+        # 30 条候选: RRF 分降序 1.0 → 0.71
+        results31 = [
+            SearchResult(
+                chunk_id=i, text=f"candidate chunk {i}", score=1.0 - i * 0.01,
+                doc_id="d1", series=38, spec_number="38.413", release="R18",
+                parent_section_id="8.3.1", parent_title="PDU Session Setup",
+                chunk_index=i,
+            )
+            for i in range(30)
+        ]
+        # 真阳性: RRF 排 5, reranker 分把它压到第 21 名
+        results31.insert(4, SearchResult(
+            chunk_id="t", text="target true positive chunk", score=0.965,
+            doc_id="d1", series=38, spec_number="38.413", release="R18",
+            parent_section_id="8.3.1", parent_title="PDU Session Setup",
+            chunk_index=99,
+        ))
+
+        store = MagicMock()
+        store.count = 1000
+        store.supports_bm25 = True
+        store.bm25_count = 800
+        store._collection = MagicMock()
+        store._ensure_connected = MagicMock()
+        store.search_sparse = MagicMock(return_value=[])
+        store.hybrid_search.return_value = results31
+        store.get_documents_summary.return_value = {}
+        store.get_document_chunks.return_value = []
+        store.delete_by_filter.return_value = 0
+
+        class _FakeReranker:
+            def rerank(self, query, candidates, top_k=None):
+                k = top_k if top_k is not None else len(candidates)
+                for c in candidates:
+                    c.score = float(
+                        -20.5 if str(c.chunk_id) == "t" else -int(c.chunk_id)
+                    )
+                scored = sorted(candidates, key=lambda c: c.score, reverse=True)
+                return scored[:k]
+
+        monkeypatch.setattr("src.retriever.planner.get_reranker", lambda: _FakeReranker())
+
+        pipeline2 = RAGPipeline(vector_store=store, llm_client=mock_llm)
+        results = pipeline2.search("PDU session", top_k=20)
+
+        ids = [str(r.chunk_id) for r in results]
+        assert "t" in ids, "候选池 >20 时真阳性不应在 reranker 截断阶段出局"
+
 
 # ── 辅助函数测试 ──
 

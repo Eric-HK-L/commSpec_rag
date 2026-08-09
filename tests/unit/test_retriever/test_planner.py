@@ -138,3 +138,90 @@ class TestGetQueryEmbeddings:
         assert len(embeds) == 2
         assert embeds[0].shape == (1024,)
         assert np.all(embeds[0] == 0)
+
+
+class TestRerankFusionScope:
+    """_rerank 融合作用域 — 必须覆盖全候选池, 而非 reranker 截断后的 top_k.
+
+    缺陷: 旧实现先 reranker.rerank(top_k) 截断到 20, 再只在 20 条内融合 —
+    RRF 排 3-5 但 reranker 排 21+ 的真阳性直接出局.
+    修复: 对全候选池打分并融合, 最后才截断到 top_k.
+    """
+
+    def test_rrf_top5_but_reranker_rank21_survives(self, monkeypatch):
+        """pool=50 / top_k=20 — RRF 排 5 但 reranker 排 21 的 chunk 必须进入最终 top-20."""
+        from src.config import settings
+        from src.retriever.search import RetrievalResult
+
+        monkeypatch.setattr(settings, "reranker_enabled", True)
+
+        top_k = 20
+        # 候选池 50 条: 原始分 (RRF 序) 降序 1.0 → 0.51
+        results = [
+            RetrievalResult(
+                chunk_id=i, text=f"chunk {i}", score=1.0 - i * 0.01,
+                spec_number="38.413", parent_section_id="8.3.1",
+            )
+            for i in range(50)
+        ]
+        # 真阳性: RRF 排 5 (原始分 0.965), 但 reranker 分把它压到第 21 名
+        target = RetrievalResult(
+            chunk_id="t", text="target true positive", score=0.965,
+            spec_number="38.413", parent_section_id="8.3.1",
+        )
+        results.insert(4, target)
+
+        # Fake reranker: 分数 = -chunk_id (id 越大越差), target 固定 -20.5 → 排名 21
+        class _FakeReranker:
+            def rerank(self, query, candidates, top_k=None):
+                k = top_k if top_k is not None else len(candidates)
+                for c in candidates:
+                    c.score = float(
+                        -20.5 if str(c.chunk_id) == "t" else -int(c.chunk_id)
+                    )
+                scored = sorted(candidates, key=lambda c: c.score, reverse=True)
+                return scored[:k]
+
+        monkeypatch.setattr("src.retriever.planner.get_reranker", lambda: _FakeReranker())
+
+        planner = _make_planner()
+        out = planner._rerank("query", results, top_k)
+
+        ids = [str(r.chunk_id) for r in out]
+        assert len(out) <= top_k
+        assert "t" in ids, (
+            "RRF 排 5 但 reranker 排 21+ 的真阳性被融合作用域截断丢弃"
+        )
+
+    def test_fused_scores_are_python_float(self, monkeypatch):
+        """融合后分数必须是 JSON 可序列化的 Python float (SSE sources 依赖)."""
+        from src.config import settings
+        from src.retriever.search import RetrievalResult
+
+        monkeypatch.setattr(settings, "reranker_enabled", True)
+
+        top_k = 20
+        results = [
+            RetrievalResult(
+                chunk_id=i, text=f"chunk {i}", score=1.0 - i * 0.01,
+            )
+            for i in range(25)
+        ]
+
+        class _FakeReranker:
+            def rerank(self, query, candidates, top_k=None):
+                k = top_k if top_k is not None else len(candidates)
+                for c in candidates:
+                    c.score = float(-int(c.chunk_id))
+                scored = sorted(candidates, key=lambda c: c.score, reverse=True)
+                return scored[:k]
+
+        monkeypatch.setattr("src.retriever.planner.get_reranker", lambda: _FakeReranker())
+
+        planner = _make_planner()
+        out = planner._rerank("query", results, top_k)
+
+        import json
+        payload = [{"chunk_id": str(r.chunk_id), "score": r.score} for r in out]
+        json.dumps(payload)  # 不抛 TypeError = 分数可序列化
+        assert all(isinstance(r.score, float) for r in out)

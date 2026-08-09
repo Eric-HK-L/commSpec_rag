@@ -227,8 +227,9 @@ class RetrievalPlanner:
         quality = evaluate_quality(results)
         action = diagnose_quality(quality, len(results))
         logger.info(
-            "检索质量: 密度=%.3f 多样性=%.2f 覆盖=%d | %s",
+            "检索质量: 密度=%.3f 多样性=%.2f 覆盖=%d | %s | 建议: rewrite=%s expand=%s suggest=%s",
             quality.density, quality.diversity, quality.coverage, action.reason,
+            action.should_rewrite, action.should_expand, action.should_suggest,
         )
         if not quality.overall_ok:
             logger.warning("检索质量不达标, 触发降级策略")
@@ -507,8 +508,9 @@ class RetrievalPlanner:
         orig_max = float(orig_scores.max()) if len(orig_scores) else 0.0
 
         try:
-            # 获取 Cross-Encoder 分数 (reranker 内部会设置 result.score)
-            reranked = reranker.rerank(query, results, top_k=top_k)
+            # 对全候选池打分 (不先截断 top_k) — RRF 靠前但 reranker 排 21+
+            # 的真阳性必须参与融合, 否则在 reranker 截断时直接出局
+            reranked = reranker.rerank(query, results, top_k=len(results))
         except Exception as e:
             logger.warning("Reranker 失败, 降级返回原始候选: %s", e)
             return results[:top_k]
