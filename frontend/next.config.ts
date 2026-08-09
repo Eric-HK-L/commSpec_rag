@@ -18,7 +18,9 @@ function getAllLocalIPs(): string[] {
 
 const autoIPs = getAllLocalIPs();
 const extraOrigins = process.env.DEV_ORIGIN
-  ? process.env.DEV_ORIGIN.split(",").map(s => s.trim()).filter(Boolean)
+  ? process.env.DEV_ORIGIN.split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
   : [];
 const devOrigins = [...autoIPs, ...extraOrigins];
 
@@ -28,6 +30,11 @@ const nextConfig: NextConfig = {
   output: "standalone",
   devIndicators: false,
   allowedDevOrigins: devOrigins,
+  // 显式指定应用根目录 — 仓库根目录有第二个 package-lock.json,
+  // 不设置会导致 Turbopack 把 workspace root 误判为仓库根, 解析 next 包失败
+  turbopack: {
+    root: process.cwd(),
+  },
   // SSE 流式问答最长可 60+ 秒，防止 Next.js 代理超时断开 (socket hang up)
   httpAgentOptions: { keepAlive: true },
   experimental: {

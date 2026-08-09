@@ -112,3 +112,5 @@ logs/
 *.log
 # eval 运行时 checkpoint (可重建, 不入库)
 tests/eval/eval_checkpoint.json
+# Playwright MCP 诊断产物
+.playwright-mcp/
