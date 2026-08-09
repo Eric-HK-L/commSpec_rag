@@ -105,6 +105,36 @@ class TestAtomicBlockProtection:
         assert "__PIPETABLE_0__" in protected
         assert "| a |" in pmap["__PIPETABLE_0__"]
 
+    def test_protect_pipe_table_multi_column(self):
+        # 3GPP 规范多为 3+ 列表格 — 分隔行 |---|----|----| 必须被识别为 pipe table
+        # 修复前 PIPE_TABLE_SEP ^\|[-: ]+\|$ 只匹配 2 段, 3 列表格被当 prose 切碎
+        text = (
+            "Before\n"
+            "| Channel | Symbol | Subcarrier |\n"
+            "|---------|--------|------------|\n"
+            "| PSS     | 0      | 56..182    |\n"
+            "After"
+        )
+        protected, pmap = HeaderAwareSplitter._protect_atomic_blocks(text)
+        assert "__PIPETABLE_0__" in protected
+        assert "| Channel | Symbol | Subcarrier |" in pmap["__PIPETABLE_0__"]
+        assert "| PSS     | 0      | 56..182    |" in pmap["__PIPETABLE_0__"]
+
+    def test_segment_pipe_table_multi_column(self):
+        # 多列表格应被 _segment_by_atomic_blocks 识别为独立 pipe_table 段
+        text = (
+            "Intro paragraph.\n\n"
+            "| Channel | Symbol |\n"
+            "|---------|--------|\n"
+            "| PSS     | 0      |\n"
+            "| SSS     | 2      |\n"
+        )
+        segments = HeaderAwareSplitter()._segment_by_atomic_blocks(text)
+        types = [t for t, _ in segments]
+        assert "pipe_table" in types
+        table_seg = next(tx for t, tx in segments if t == "pipe_table")
+        assert "| PSS     | 0      |" in table_seg
+
     def test_restore_roundtrip(self):
         original = "Before\n+---+---+\n| x | y |\n+---+---+\nAfter"
         protected, pmap = HeaderAwareSplitter._protect_atomic_blocks(original)

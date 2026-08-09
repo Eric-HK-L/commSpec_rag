@@ -33,8 +33,10 @@ GRID_TABLE_BOUNDARY = re.compile(r'^\+[-=+]+\+$')
 # Math display block: $$ ... $$
 MATH_BLOCK_DELIM = re.compile(r'^\$\$$')
 # Pipe Table: | a | b |
+# 分隔行需匹配任意列数 (3GPP 规范多为 3+ 列表格, 原 ^\|[-: ]+\|$ 只匹配 2 段,
+# 导致多列表格被当 prose 切碎 — SSB 表 7.4.3.1-1 等核心内容丢失)
 PIPE_TABLE_LINE = re.compile(r'^\|.+\|$')
-PIPE_TABLE_SEP = re.compile(r'^\|[-: ]+\|$')
+PIPE_TABLE_SEP = re.compile(r'^\|[\s\-:|]+\|$')
 
 # ── Chunk 元数据规则分类 ──
 
