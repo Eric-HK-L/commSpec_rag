@@ -370,3 +370,24 @@ class TestParentTextOnSubChunks:
         assert len(chunks) >= 2
         # 同 section 所有子 chunk 共享首个子 chunk 索引 (重编号后)
         assert all(c.parent_chunk_id == chunks[0].chunk_index for c in chunks)
+
+    def test_parent_intro_before_first_subsection_preserved(self):
+        # 父章节开头正文 (在第一个子标题之前) 必须生成 chunk — 修复前被 _collect_leaves 丢弃
+        # 如 TS 38.211 §7.4.3.1: "4 OFDM symbols" 正文 + 表 7.4.3.1-1 在 7.4.3.1.1 之前
+        doc = (
+            "# 7.4.3.1 Time-frequency structure of an SS/PBCH block\n\n"
+            "An SS/PBCH block consists of 4 OFDM symbols and 240 contiguous subcarriers.\n\n"
+            "| Channel | Symbol | Subcarrier |\n"
+            "|---------|--------|------------|\n"
+            "| PSS     | 0      | 56..182    |\n\n"
+            "## 7.4.3.1.1 Mapping of PSS\n\n"
+            "The PSS is mapped per Table 7.4.3.1-1.\n"
+        )
+        splitter = HeaderAwareSplitter(min_chunk_chars=0)
+        chunks = splitter.split_document(doc)
+        all_text = " ".join(c.text for c in chunks)
+        assert "4 OFDM symbols" in all_text, f"父章节开头正文丢失! chunks={[c.text[:40] for c in chunks]}"
+        assert "240 contiguous" in all_text
+        assert "Table 7.4.3.1-1" in all_text
+        # 子章节正文也在
+        assert "Mapping of PSS" in all_text

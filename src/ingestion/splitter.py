@@ -306,12 +306,18 @@ class HeaderAwareSplitter:
         release: str,
         doc_type: str = "3gpp",
     ) -> list[Chunk]:
-        """从章节树叶子节点切分 chunk."""
+        """从章节树叶子节点切分 chunk.
+
+        父章节开头正文 (第一个子标题之前的内容) 单独成 chunk — 否则如
+        TS 38.211 §7.4.3.1 的 "4 OFDM symbols" 正文与表 7.4.3.1-1 会随
+        子章节切分而丢失 (叶子收集只覆盖子节点自身区间).
+        """
         chunks: list[Chunk] = []
+        intro_nodes = self._collect_parent_intros(root)
         leaf_nodes = self._collect_leaves(root)
 
         chunk_idx = 0
-        for node in leaf_nodes:
+        for node in intro_nodes + leaf_nodes:
             content = text[node.start:node.end].strip()
             if not content:
                 continue
@@ -351,6 +357,24 @@ class HeaderAwareSplitter:
                 chunk_idx += len(sub_chunks)
 
         return chunks
+
+    def _collect_parent_intros(self, node: SectionNode) -> list[SectionNode]:
+        """收集所有有子节点且开头有正文的父章节 — 开头正文区间 [start, 首子节点 start).
+
+        避免父章节介绍段 (如 SSB 时频结构定义) 在叶子切分时丢失.
+        """
+        intros: list[SectionNode] = []
+        if node.children:
+            first_child_start = min(c.start for c in node.children)
+            if first_child_start > node.start and node.level > 0:
+                intro = SectionNode(
+                    level=node.level, title=node.title, sec_id=node.sec_id,
+                    start=node.start, end=first_child_start, parent=node.parent,
+                )
+                intros.append(intro)
+            for child in node.children:
+                intros.extend(self._collect_parent_intros(child))
+        return intros
 
     def _collect_leaves(self, node: SectionNode) -> list[SectionNode]:
         """收集所有叶子节点."""
