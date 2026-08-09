@@ -75,3 +75,38 @@ class TestMilvusInsertParentFields:
         fused = MS._rrf_fuse(dense, [], 5)
         assert fused[0].parent_text == "parent ctx"
         assert fused[0].parent_chunk_id == 12
+
+
+class TestSmallToBigRetrieval:
+    """检索侧 small-to-big — 子 chunk 命中 → 父 section 文本进入 LLM 上下文."""
+
+    def test_parent_text_flows_to_prompt_context(self):
+        from src.generator.prompt import build_rag_prompt
+        from src.retriever.planner import RetrievalPlanner
+        from src.retriever.search import RetrievalResult
+
+        planner = RetrievalPlanner.__new__(RetrievalPlanner)
+        results = [RetrievalResult(
+            chunk_id=1, text="sub chunk hit", score=0.9, doc_id="d",
+            series=38, spec_number="38.413", release="R18",
+            parent_section_id="5.3", parent_title="RRC Setup",
+            parent_text="Parent section complete text for context",
+        )]
+
+        planner.expand_parent_context(results)
+        assert results[0].parent_context == "Parent section complete text for context"
+
+        prompt = build_rag_prompt("RRC setup query", results)
+        user = prompt[1]["content"]
+        assert "Parent section complete text for context" in user
+
+    def test_search_result_preserves_parent_via_from_search_result(self):
+        from src.retriever.search import RetrievalResult
+        sr = SearchResult(
+            chunk_id=9, text="sub", score=0.8, doc_id="d",
+            spec_number="38.413", parent_section_id="5.3",
+            parent_chunk_id=12, parent_text="parent full text",
+        )
+        rr = RetrievalResult.from_search_result(sr)
+        assert rr.parent_text == "parent full text"
+        assert rr.parent_chunk_id == 12

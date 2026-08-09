@@ -37,6 +37,8 @@ class RetrievalResult:
     # small-to-big 父上下文 (来自 Milvus parent_text / parent_chunk_id 字段)
     parent_text: str = ""
     parent_chunk_id: int = 0
+    # 扩展上下文: 命中的子 chunk 附带父 section 完整文本 (small-to-big)
+    parent_context: str = ""
     # 扩展上下文：同文档相邻 chunk
     adjacent_chunks: list[str] = field(default_factory=list)
 
@@ -90,6 +92,10 @@ class RetrievalResult:
 
         header = " | ".join(parts) if parts else f"Doc: {self.doc_id}"
         body = f"[{header}]\n{self.text}"
+
+        # 附加父章节上下文 (small-to-big, 控制总量避免超上下文)
+        if self.parent_context:
+            body += f"\n\n[父章节上下文]\n{self.parent_context[:1500]}"
 
         # 附加相邻 chunk 上下文 (最多 4 条)
         if self.adjacent_chunks:

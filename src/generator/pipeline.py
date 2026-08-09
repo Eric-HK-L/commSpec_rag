@@ -163,6 +163,8 @@ class RAGPipeline:
             )
 
         # Step 3.9: 相邻 chunk 上下文扩展 — 分类列举问题扩大范围
+        # small-to-big 父上下文已在 plan() 中随检索结果附加 (parent_context),
+        # build_rag_prompt 组装上下文时注入父 section 文本。
         if is_taxonomy_query(search_query):
             self._planner.expand_adjacent_chunks(results, top_n=10, window=3)
         else:

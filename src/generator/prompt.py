@@ -218,6 +218,14 @@ def build_rag_prompt(
             if adj_lines:
                 context_parts.append("  （相邻上下文：同文档邻近段落, 非检索命中但语义相关）\n" + "\n".join(adj_lines))
 
+        # small-to-big 父章节上下文 — 命中子 chunk 附带所属 section 完整文本 (控制总量)
+        parent_ctx = getattr(chunk, 'parent_context', '')
+        if parent_ctx:
+            context_parts.append(
+                "  （父章节上下文：该片段所属章节的完整文本, 供理解上下文）\n"
+                + _grid_table_to_pipe(parent_ctx)[:1500]
+            )
+
         chunk.text = original_text
     context_text = "\n\n---\n\n".join(context_parts)
 

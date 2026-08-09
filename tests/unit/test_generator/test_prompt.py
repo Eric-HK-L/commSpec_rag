@@ -75,3 +75,34 @@ class TestBuildQueryExpansionPrompt:
         assert msgs[1]["role"] == "user"
         assert "查询优化器" in msgs[0]["content"]
         assert "PDU session setup" in msgs[1]["content"]
+
+
+class TestBuildRagPromptParentContext:
+    """small-to-big: 上下文组装附带父 section 文本 (控制总量 1500 chars)."""
+
+    def test_parent_context_rendered(self):
+        chunk = RetrievalResult(
+            chunk_id=1, text="sub chunk detail", score=0.9,
+            doc_id="d", series=38, spec_number="38.413", release="R18",
+            parent_section_id="5.3", parent_title="RRC Setup",
+            parent_context="Parent section full text for small-to-big context",
+        )
+        user = build_rag_prompt("query", [chunk])[1]["content"]
+        assert "Parent section full text" in user
+        assert "父章节上下文" in user
+
+    def test_no_parent_context_no_extra_block(self):
+        chunk = _make_chunk()
+        user = build_rag_prompt("query", [chunk])[1]["content"]
+        assert "父章节上下文" not in user
+
+    def test_parent_context_capped_at_1500(self):
+        chunk = RetrievalResult(
+            chunk_id=1, text="sub chunk", score=0.9,
+            doc_id="d", series=38, spec_number="38.413", release="R18",
+            parent_section_id="5.3", parent_title="RRC Setup",
+            parent_context="x" * 5000,
+        )
+        user = build_rag_prompt("query", [chunk])[1]["content"]
+        # 上下文总量受控: 父文本仅注入前 1500 chars
+        assert user.count("x" * 100) <= 15

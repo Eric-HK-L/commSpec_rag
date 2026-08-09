@@ -266,6 +266,9 @@ class RetrievalPlanner:
                 )
                 online_context = self._online.format_as_context(online_results)
 
+        # Step 3.9: small-to-big 父上下文扩展 — 命中子 chunk 附带父 section 文本
+        self.expand_parent_context(results)
+
         return RetrievalContext(
             query_lang=query_lang,
             search_query=search_query,
@@ -309,7 +312,38 @@ class RetrievalPlanner:
                 query_embedding, _top_k, filter_expr=filter_expr,
             )
 
+        # small-to-big 父上下文扩展 — 命中子 chunk 附带父 section 文本
+        self.expand_parent_context(results)
         return results
+
+    def expand_parent_context(
+        self,
+        results: list[RetrievalResult],
+        top_n: int = 10,
+        max_chars: int = 1500,
+    ) -> None:
+        """small-to-big 父上下文扩展 — 命中子 chunk 时附带父 section 完整文本.
+
+        将检索结果携带的 parent_text (摄入时写入) 提升为 parent_context,
+        供 prompt 组装注入 LLM 上下文。跳过条件:
+        - parent_text 为空 (chunk 本身即完整 section, 无父级)
+        - parent_text 与 chunk 文本几乎相同 (冗余, 避免重复注入)
+        仅扩展前 top_n 条, 且每条截断至 max_chars, 控制上下文总量.
+        """
+        expanded = 0
+        for r in results[:top_n]:
+            parent = getattr(r, "parent_text", "") or ""
+            if not parent:
+                continue
+            if parent == r.text or parent in r.text:
+                continue
+            r.parent_context = parent[:max_chars]
+            expanded += 1
+        if expanded:
+            logger.info(
+                "small-to-big 父上下文扩展: %d/%d 条结果附带父 section 文本",
+                expanded, min(len(results), top_n),
+            )
 
     def expand_adjacent_chunks(
         self,

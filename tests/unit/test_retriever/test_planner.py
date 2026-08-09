@@ -317,3 +317,56 @@ class TestRerankFusionScope:
         payload = [{"chunk_id": str(r.chunk_id), "score": r.score} for r in out]
         json.dumps(payload)  # 不抛 TypeError = 分数可序列化
         assert all(isinstance(r.score, float) for r in out)
+
+
+class TestExpandParentContext:
+    """small-to-big 父上下文扩展 — parent_text → parent_context, 冗余跳过."""
+
+    def _result(self, **kw):
+        from src.retriever.search import RetrievalResult
+        defaults = dict(chunk_id=1, text="sub chunk", score=0.9, spec_number="38.413")
+        defaults.update(kw)
+        return RetrievalResult(**defaults)
+
+    def test_sets_parent_context_from_parent_text(self):
+        planner = _make_planner()
+        r = self._result(parent_text="Parent section full context text")
+        planner.expand_parent_context([r])
+        assert r.parent_context == "Parent section full context text"
+
+    def test_skips_empty_parent_text(self):
+        planner = _make_planner()
+        r = self._result()
+        planner.expand_parent_context([r])
+        assert r.parent_context == ""
+
+    def test_skips_redundant_when_parent_equals_text(self):
+        planner = _make_planner()
+        r = self._result(text="same text", parent_text="same text")
+        planner.expand_parent_context([r])
+        assert r.parent_context == ""
+
+    def test_skips_redundant_when_text_contains_parent(self):
+        """chunk 已包含 parent 全文 (如未切分 section) → 不重复注入."""
+        planner = _make_planner()
+        r = self._result(text="5.3.1 UE behaviour details full text",
+                         parent_text="UE behaviour details")
+        planner.expand_parent_context([r])
+        assert r.parent_context == ""
+
+    def test_caps_parent_context_length(self):
+        planner = _make_planner()
+        r = self._result(parent_text="x" * 5000)
+        planner.expand_parent_context([r], max_chars=200)
+        assert len(r.parent_context) == 200
+
+    def test_only_expands_top_n(self):
+        planner = _make_planner()
+        results = [
+            self._result(chunk_id=i, text=f"t{i}", score=1.0 - i * 0.01, parent_text=f"p{i} " * 5)
+            for i in range(5)
+        ]
+        planner.expand_parent_context(results, top_n=3)
+        assert results[0].parent_context and results[2].parent_context
+        assert results[3].parent_context == ""
+        assert results[4].parent_context == ""
