@@ -38,7 +38,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import ingestion_config, settings  # noqa: E402
-from src.ingestion.embedder import BatchEmbedder  # noqa: E402
+from src.ingestion.embedder import BatchEmbedder, embedding_text  # noqa: E402
 from src.ingestion.embedding_cache import EmbeddingCache  # noqa: E402
 from src.ingestion.extractor import MarkdownSourceExtractor, PandocExtractor  # noqa: E402
 from src.ingestion.manifest import (  # noqa: E402
@@ -640,7 +640,9 @@ def embed_and_insert(
         seg_texts = [
             # 用全文嵌入 (splitter 已按 BGE-M3 8192 token 安全上限拆分),
             # 截断到 500 字会导致 500 字后的内容对检索零贡献
-            f"{c.section_title} {c.section_path} {c.text}" if c.section_path else c.text
+            # 嵌入文本必须走 embedding_text() 纯正文 (唯一真源):
+            # 不拼接 section_title/section_path, 与查询侧及其余摄入路径保持一致
+            embedding_text(c)
             for c in all_chunks[start:end]
         ]
         seg_count = len(seg_texts)

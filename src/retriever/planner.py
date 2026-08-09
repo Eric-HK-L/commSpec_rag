@@ -441,6 +441,9 @@ class RetrievalPlanner:
         return search_query, self._expand_query(search_query, history)
 
     def _get_query_embedding(self, query: str) -> np.ndarray:
+        # 查询侧嵌入输入为纯查询文本, 与文档侧 src.ingestion.embedder.embedding_text
+        # 的纯正文构成保持一致 —— 两侧向量空间对齐 (BGE-M3 对输入前部敏感,
+        # 文档侧不得拼接 section_title/section_path, 否则产生 domain shift)。
         try:
             embeddings = self._llm.embed([query])
             return np.array(embeddings[0], dtype=np.float32)

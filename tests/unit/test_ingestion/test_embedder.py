@@ -1,12 +1,15 @@
 """测试 BatchEmbedder — 双层缓存 + 嵌入降级."""
 
 import hashlib
+import importlib
+import inspect
 
 import numpy as np
 import pytest
 
-from src.ingestion.embedder import BatchEmbedder
+from src.ingestion.embedder import BatchEmbedder, embedding_text
 from src.ingestion.embedding_cache import EmbeddingCache
+from src.retriever.vector_store import Chunk
 
 
 @pytest.fixture
@@ -187,3 +190,64 @@ class TestCacheMethods:
         removed = cache.clear()
         assert removed == 2
         assert cache.stats()["total_entries"] == 0
+
+
+# ── embedding_text() 唯一真源: 嵌入文本构成为纯正文 ──
+
+EMBEDDING_TEXT_PATH_MODULES = [
+    "scripts.bulk_ingest",
+    "src.ingestion.orchestrator",
+    "src.ingestion.incremental",
+    "scripts.reindex_bge_m3",
+]
+
+
+class TestEmbeddingTextHelper:
+    """embedding_text() 必须返回纯正文 (chunk.text), 不拼接标题/章节路径."""
+
+    def test_returns_pure_body_with_section_fields(self):
+        chunk = Chunk(
+            text="The UE shall transmit at the configured power level.",
+            section_title="UE behaviour",
+            section_path="7 Uplink Power control > 7.1 PUSCH > 7.1.1 UE behaviour",
+        )
+        assert embedding_text(chunk) == chunk.text
+
+    def test_returns_pure_body_without_section_fields(self):
+        body = "Independent chunk text"
+        assert embedding_text(Chunk(text=body)) == body
+
+    def test_returns_empty_for_empty_text(self):
+        assert embedding_text(Chunk(text="", section_title="X", section_path="A > B")) == ""
+
+    def test_preserves_whitespace(self):
+        body = "  padded body  "
+        assert embedding_text(Chunk(text=body)) == body
+
+
+class TestAllIngestionPathsUseSingleSourceHelper:
+    """四条摄入路径全部路由到 embedding_text() —— 彼此一致、均为纯正文."""
+
+    @pytest.mark.parametrize("module_path", EMBEDDING_TEXT_PATH_MODULES)
+    def test_path_binds_single_source_helper(self, module_path):
+        mod = importlib.import_module(module_path)
+        # 身份一致 ⇒ 四条路径产出的嵌入文本构成彼此一致 (唯一真源)
+        assert mod.embedding_text is embedding_text
+
+    @pytest.mark.parametrize("module_path", EMBEDDING_TEXT_PATH_MODULES)
+    def test_path_embedding_text_is_pure_body(self, module_path):
+        mod = importlib.import_module(module_path)
+        body = "RRC Reconfiguration complete message body."
+        chunk = Chunk(
+            text=body,
+            section_title="RRC Reconfiguration",
+            section_path="5.3 RRC Reconfiguration > 5.3.1 General",
+        )
+        # 产出 === 纯 c.text, 无标题/路径前缀
+        assert mod.embedding_text(chunk) == body
+
+    @pytest.mark.parametrize("module_path", EMBEDDING_TEXT_PATH_MODULES)
+    def test_path_has_no_leftover_title_concat(self, module_path):
+        # 回归防护: 旧拼接 f"{c.section_title} {c.section_path} {c.text}" 必须已移除
+        mod = importlib.import_module(module_path)
+        assert "c.section_title} {c.section_path}" not in inspect.getsource(mod)

@@ -15,14 +15,39 @@ import hashlib
 import logging
 import time
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
 from src.config import settings
 from src.ingestion.embedding_cache import EmbeddingCache
 
+if TYPE_CHECKING:
+    from src.retriever.vector_store import Chunk
+
 logger = logging.getLogger(__name__)
+
+
+def embedding_text(chunk: Chunk) -> str:
+    """返回用于嵌入的**纯正文** — 嵌入文本构成的唯一真源 (Single Source of Truth).
+
+    所有摄入路径 (scripts/bulk_ingest.py、src/ingestion/orchestrator.py、
+    src/ingestion/incremental.py、scripts/reindex_bge_m3.py) 必须经由此函数
+    构造嵌入输入, 以保证:
+
+      1. 文档侧与查询侧一致: 查询侧 (retriever/planner.py 的
+         ``_get_query_embedding``) 直接嵌入纯查询文本, 因此文档侧也必须只嵌入
+         纯正文。BGE-M3 对输入前部敏感, 若在正文前拼接 section_title /
+         section_path, 标题词会系统性拉偏文档向量 (domain shift), 拉低召回。
+      2. 多路径一致: 四条摄入路径共用同一构成逻辑, 避免向量空间分叉。
+
+    标题/章节信息 (section_title / section_path) 不参与嵌入, 改由 BM25 与
+    reranker 提供 —— 它们仍作为元数据入库, 供检索后处理 (filter / prompt
+    溯源) 使用。
+
+    未来新增分块/摄入路径时, 必须复用本函数, 不得在函数之外自行拼接文本。
+    """
+    return chunk.text
 
 
 class BatchEmbedder:

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 from src.config import ingestion_config, settings
-from src.ingestion.embedder import BatchEmbedder
+from src.ingestion.embedder import BatchEmbedder, embedding_text
 from src.ingestion.embedding_cache import EmbeddingCache
 from src.ingestion.extractor import ExtractionResult, PandocExtractor
 from src.ingestion.splitter import HeaderAwareSplitter, classify_chunk
@@ -145,7 +145,7 @@ class IngestionOrchestrator:
                 cache_dir=str(settings.data_abs_dir / "cache" / "embeddings"),
                 sqlite_cache=sqlite_cache,
             )
-            texts = [c.text for c in chunks]
+            texts = [embedding_text(c) for c in chunks]
             embeddings = embedder.embed_batch(texts)
 
             for c, emb in zip(chunks, embeddings):

@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from src.config import settings
+from src.ingestion.embedder import embedding_text
 from src.retriever.milvus_store import _escape_milvus_expr
 from src.retriever.vector_store import VectorStore
 
@@ -134,7 +135,7 @@ class IncrementalIndexer:
             }
             chunks = splitter.split_document(result.markdown, doc_meta)
 
-            texts = [c.text for c in chunks]
+            texts = [embedding_text(c) for c in chunks]
             embeddings = embedder.embed_batch(texts)
             for c, emb in zip(chunks, embeddings):
                 c.embedding = emb
@@ -170,7 +171,7 @@ class IncrementalIndexer:
                 continue
 
             chunks = splitter.split_document(result.markdown, {"doc_id": Path(fp).stem, "spec_number": result.spec_number, "release": result.release})
-            texts = [c.text for c in chunks]
+            texts = [embedding_text(c) for c in chunks]
             embeddings = embedder.embed_batch(texts)
             for c, emb in zip(chunks, embeddings):
                 c.embedding = emb

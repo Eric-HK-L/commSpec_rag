@@ -32,6 +32,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import settings  # noqa: E402
+from src.ingestion.embedder import embedding_text  # noqa: E402
 from src.ingestion.mps_embedder import MPSChunkedEmbedder  # noqa: E402
 from src.retriever.milvus_store import MilvusStore  # noqa: E402
 
@@ -80,8 +81,8 @@ def read_chunks_from_collection(store: MilvusStore, label: str) -> list[dict]:
 
 def build_chunk_objects(rows: list[dict]) -> list:
     """将 Milvus 行转换为 Chunk 对象列表."""
-    from src.retriever.vector_store import Chunk
     from src.retriever.milvus_store import VARCHAR_MAX, _safe_truncate_bytes
+    from src.retriever.vector_store import Chunk
 
     chunks = []
     for r in rows:
@@ -191,7 +192,6 @@ def insert_to_collection(
     label: str,
 ) -> int:
     """将 chunks + embeddings 入库到指定 collection."""
-    from src.retriever.milvus_store import VARCHAR_MAX
 
     # 切换到目标 collection
     store._collection_name = BGE_M3_COLLECTION
@@ -240,7 +240,7 @@ def run_eval_comparison() -> dict:
     """跑评测对比, 输出指标."""
     logger.info("── 评测对比 ──")
     try:
-        from tests.eval.metrics import EvalReport, EvalResult, EvalSample, evaluate_one
+        from tests.eval.metrics import EvalResult, evaluate_one
         from tests.eval.run_eval import load_test_set
     except ImportError as e:
         logger.error("评测模块不可用: %s", e)
@@ -257,8 +257,8 @@ def run_eval_comparison() -> dict:
     ]:
         logger.info("评测 %s (%s)...", label, coll_name)
         # 为每个 collection 创建独立的 store + retriever
-        from src.retriever.search import HybridRetriever
         from src.generator.llm_client import LLMClient
+        from src.retriever.search import HybridRetriever
 
         store = MilvusStore(collection_name=coll_name)
         store.connect()
@@ -334,8 +334,9 @@ def main():
         logger.error("无数据! bge-large-v1.5 嵌入可能尚未完成")
         return
 
-    texts = [str(r.get("text", "")) for r in rows]
+    # 嵌入文本统一走 embedding_text() 纯正文 (唯一真源), 与其余摄入路径一致
     chunks = build_chunk_objects(rows)
+    texts = [embedding_text(c) for c in chunks]
     source_store.disconnect()
     logger.info("总 chunks: %d, 总文本: ~%d 字符", len(texts), sum(len(t) for t in texts))
 
@@ -367,8 +368,6 @@ def main():
     m3_store = MilvusStore(collection_name=BGE_M3_COLLECTION)
     inserted = insert_to_collection(chunks, m3_embeddings, m3_store, "m3")
 
-    # 单独保存 BM25 (避免丢失)
-    bm25_path = settings.vectors_dir / "bm25_index_BGE-M3.pkl"
     # BM25 已在 insert_to_collection 中构建并保存到默认路径，这里不额外操作
     m3_store.disconnect()
 
@@ -402,7 +401,7 @@ def print_summary(
         m3_tps = quick_results.get("BGE-M3", {}).get("texts_per_second", 0)
         v1_mem = quick_results.get("bge-large-v1.5", {}).get("peak_memory_mb", 0)
         m3_mem = quick_results.get("BGE-M3", {}).get("peak_memory_mb", 0)
-        print(f"\n  【速度】(MPS, 子集 64 texts)")
+        print("\n  【速度】(MPS, 子集 64 texts)")
         print(f"    bge-large-v1.5:  {v1_tps:>8.0f} t/s,  peak {v1_mem:.0f} MB")
         print(f"    BGE-M3:          {m3_tps:>8.0f} t/s,  peak {m3_mem:.0f} MB")
         if v1_tps > 0:
@@ -418,7 +417,7 @@ def print_summary(
         nan = m3_metrics.get("nan_count", 0)
         zero = m3_metrics.get("zero_vector_count", 0)
         inserted = m3_metrics.get("inserted_chunks", 0)
-        print(f"\n  【全量 BGE-M3】(MPS spawn)")
+        print("\n  【全量 BGE-M3】(MPS spawn)")
         print(f"    文本数: {total}")
         print(f"    耗时:   {elapsed:.1f}s ({elapsed/60:.1f} min)")
         print(f"    吞吐:   {tps:.0f} t/s")
@@ -429,7 +428,7 @@ def print_summary(
 
     # 检索质量
     if eval_report:
-        print(f"\n  【检索质量】(60 题 3GPP 测试集)")
+        print("\n  【检索质量】(60 题 3GPP 测试集)")
         print(f"    {'指标':<20} {'bge-large-v1.5':<16} {'BGE-M3':<16} {'差异':<10}")
         print(f"    {'─' * 20} {'─' * 16} {'─' * 16} {'─' * 10}")
         for key, label in [
