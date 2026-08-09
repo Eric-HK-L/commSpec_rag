@@ -81,12 +81,14 @@ class RetrievalContext:
     """检索规划的完整产出 — plan() 的返回类型.
 
     生成阶段所需的一切上下文都从这里取, 不再使用字符串键 dict.
+    initial_results 为精排前的候选池 (供评测对比"初检召回" vs "重排后召回").
     """
 
     query_lang: str
     search_query: str
     expanded_query: str
     results: list[RetrievalResult] = field(default_factory=list)
+    initial_results: list[RetrievalResult] = field(default_factory=list)
     release_note: str = ""
     online_context: str = ""
 
@@ -180,6 +182,9 @@ class RetrievalPlanner:
                 search_query, query_embedding, results, filter_expr=filter_expr,
             )
 
+        # 记录精排前候选池 — 供评测对比"初检召回"(rerank 前) 与"重排后召回"
+        initial_results = results
+
         # Spec-aware + Cross-Encoder Reranker 精排
         results = self._post_process_results(
             query=query, expanded_query=expanded_query,
@@ -266,6 +271,7 @@ class RetrievalPlanner:
             search_query=search_query,
             expanded_query=expanded_query,
             results=results,
+            initial_results=initial_results,
             release_note=release_note,
             online_context=online_context,
         )

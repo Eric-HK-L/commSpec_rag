@@ -1,19 +1,31 @@
-"""评测执行脚本 — 加载测试集 → 检索 → 计算指标 → 输出报告.
+"""评测执行脚本 — 加载测试集 → plan() 全链路检索 → 计算指标 → 输出报告.
+
+评测走 RetrievalPlanner.plan() 全链路 (候选池=reranker_top_k=100,
+Cross-Encoder 精排生效, 多跳/图扩展/taxonomy 分解/filter_noise 参与),
+而非轻量 search() 路径 (20 候选无重排, 低估真实召回).
 
 用法:
     python -m tests.eval.run_eval                          # 默认 test_set.json
     python -m tests.eval.run_eval --test-set my_set.json   # 自定义测试集
-    python -m tests.eval.run_eval --top-k 20               # 指定检索 Top-K
+    python -m tests.eval.run_eval --fresh                  # 忽略 checkpoint 全量重算
+    python -m tests.eval.run_eval --checkpoint /tmp/ck.json  # 自定义 checkpoint 路径
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
 from pathlib import Path
 
 from .metrics import EvalReport, EvalResult, EvalSample, evaluate_batch, evaluate_one
+
+# search() 轻量路径的历史基线 (2026-08 评测, 20 候选无重排, Recall@5=0.769)
+# 仅作报告参照列 — 新评测结果与之对比, 定位 plan() 全链路的增益
+LEGACY_SEARCH_RECALL_AT_5 = 0.769
+
+CHECKPOINT_VERSION = 1
 
 
 def load_test_set(path: str) -> list[EvalSample]:
@@ -44,7 +56,9 @@ def format_report(report: EvalReport, elapsed_ms: float) -> str:
         "",
         "| 指标 | 值 | 目标 |",
         "|------|-----|------|",
-        f"| Recall@5 | {report.recall_at_5:.4f} | ≥ 0.80 |",
+        f"| Recall@5 (重排后) | {report.recall_at_5:.4f} | ≥ 0.80 |",
+        f"| Recall@5 (初检) | {report.initial_recall_at_5:.4f} | 诊断参考 |",
+        f"| Recall@5 (search路径参照) | {LEGACY_SEARCH_RECALL_AT_5:.4f} | legacy 基线 |",
         f"| Recall@10 | {report.recall_at_10:.4f} | ≥ 0.85 |",
         f"| Recall@20 | {report.recall_at_20:.4f} | ≥ 0.90 |",
         f"| MRR | {report.mrr:.4f} | ≥ 0.70 |",
@@ -57,6 +71,7 @@ def format_report(report: EvalReport, elapsed_ms: float) -> str:
             lines.append(f"### {diff} ({metrics['count']} 题)")
             lines.append("")
             lines.append(f"- Recall@5: {metrics['recall@5']:.4f}")
+            lines.append(f"- 初检 Recall@5: {metrics.get('initial_recall@5', 0.0):.4f}")
             lines.append(f"- Recall@10: {metrics['recall@10']:.4f}")
             lines.append(f"- MRR: {metrics['mrr']:.4f}")
             lines.append(f"- NDCG@10: {metrics['ndcg@10']:.4f}")
@@ -68,6 +83,7 @@ def format_report(report: EvalReport, elapsed_ms: float) -> str:
             lines.append(f"### {label} ({metrics['count']} 题)")
             lines.append("")
             lines.append(f"- Recall@5: {metrics['recall@5']:.4f}")
+            lines.append(f"- 初检 Recall@5: {metrics.get('initial_recall@5', 0.0):.4f}")
             lines.append(f"- Recall@10: {metrics['recall@10']:.4f}")
             lines.append(f"- MRR: {metrics['mrr']:.4f}")
             lines.append(f"- NDCG@10: {metrics['ndcg@10']:.4f}")
@@ -75,8 +91,60 @@ def format_report(report: EvalReport, elapsed_ms: float) -> str:
     return "\n".join(lines)
 
 
-def run_eval(test_set_path: str, top_k: int = 20, dry_run: bool = False) -> None:
-    """执行评测主流程."""
+def _sample_key(sample: EvalSample) -> str:
+    """样本唯一键 — question + expected_specs + expected_sections 的哈希.
+
+    同一测试集内容变更 (如改期望规范) 会生成不同 key, 避免 checkpoint 误命中.
+    """
+    payload = json.dumps(
+        [sample.question, sample.expected_specs, sample.expected_sections],
+        ensure_ascii=False, sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _load_checkpoint(path: Path) -> dict[str, dict]:
+    """加载 checkpoint — 损坏/版本不符时返回空 dict, 触发重算."""
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("version") == CHECKPOINT_VERSION:
+            return data.get("samples", {})
+    except (json.JSONDecodeError, OSError):
+        pass
+    return {}
+
+
+def _save_checkpoint(path: Path, samples: dict[str, dict]) -> None:
+    """原子写 checkpoint — 先写临时文件再 rename, 避免中断写坏."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(
+        json.dumps(
+            {"version": CHECKPOINT_VERSION, "samples": samples},
+            ensure_ascii=False, indent=2,
+        ),
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+
+
+def _extract_specs(results) -> list[str]:
+    """从检索结果列表提取规范编号 (去空值)."""
+    return [
+        r.spec_number for r in results
+        if hasattr(r, 'spec_number') and r.spec_number
+    ]
+
+
+def run_eval(
+    test_set_path: str,
+    dry_run: bool = False,
+    checkpoint: str | None = None,
+    fresh: bool = False,
+) -> None:
+    """执行评测主流程 — plan() 全链路检索 + checkpoint 断点续跑."""
     # 1. 加载测试集
     samples = load_test_set(test_set_path)
     print(f"✅ 加载测试集: {len(samples)} 条")
@@ -86,7 +154,7 @@ def run_eval(test_set_path: str, top_k: int = 20, dry_run: bool = False) -> None
         _dry_run(samples)
         return
 
-    # 3. 初始化检索器 (完整 RAGPipeline: 查询扩展 + Dense+BM25 混合检索)
+    # 3. 初始化检索器 (RAGPipeline.plan: 完整全链路检索)
     try:
         from src.config import settings
         from src.generator.pipeline import RAGPipeline
@@ -99,40 +167,62 @@ def run_eval(test_set_path: str, top_k: int = 20, dry_run: bool = False) -> None
         )
         store.connect()
         pipeline = RAGPipeline(vector_store=store)
-        print(f"✅ 检索器就绪 (Milvus: {store.count} chunks)")
+        print(f"✅ 检索器就绪 (Milvus: {store.count} chunks, 候选池={settings.reranker_top_k})")
     except Exception as e:
         print(f"⚠️ 检索器初始化失败 (Milvus 未运行?): {e}")
         print("进入空跑模式 — 仅验证测试集格式")
         _dry_run(samples)
         return
 
-    # 4. 逐条评测
+    # 4. checkpoint 加载 (断点续跑: 已算样本跳过)
+    checkpoint_path = Path(checkpoint) if checkpoint else (
+        Path(test_set_path).parent / "eval_checkpoint.json"
+    )
+    cached: dict[str, dict] = {} if fresh else _load_checkpoint(checkpoint_path)
+    if cached:
+        print(f"⏭️ checkpoint 命中: 跳过 {len(cached)} 条已计算样本")
+
+    # 5. 逐条评测
     results: list[EvalResult] = []
     t0 = time.time()
     for i, sample in enumerate(samples):
+        key = _sample_key(sample)
+        if key in cached:
+            entry = cached[key]
+            results.append(evaluate_one(
+                sample,
+                entry["retrieved_specs"],
+                initial_specs=entry.get("initial_specs", []),
+            ))
+            continue
         try:
-            retrieval = pipeline.search(sample.question, top_k=top_k)
-            retrieved_specs = [
-                r.spec_number for r in retrieval
-                if hasattr(r, 'spec_number') and r.spec_number
-            ]
-            result = evaluate_one(sample, retrieved_specs)
-            results.append(result)
+            ctx = pipeline.plan(sample.question)
+            retrieved_specs = _extract_specs(ctx.results)
+            initial_specs = _extract_specs(getattr(ctx, "initial_results", []))
+            results.append(evaluate_one(
+                sample, retrieved_specs, initial_specs=initial_specs,
+            ))
+            cached[key] = {
+                "retrieved_specs": retrieved_specs,
+                "initial_specs": initial_specs,
+            }
+            _save_checkpoint(checkpoint_path, cached)
             if (i + 1) % 10 == 0:
                 print(f"  进度: {i + 1}/{len(samples)}")
         except Exception as e:
             print(f"  ⚠️ 第 {i + 1} 条评测失败: {e}")
     elapsed = (time.time() - t0) * 1000
 
-    # 4. 聚合报告
+    # 6. 聚合报告
     report = evaluate_batch(results)
     output = format_report(report, elapsed)
     print("\n" + output)
 
-    # 5. 保存报告
+    # 7. 保存报告
     report_path = Path(test_set_path).parent / "eval_report.md"
     report_path.write_text(output, encoding="utf-8")
     print(f"\n📄 报告已保存: {report_path}")
+    print(f"💾 checkpoint 已保存: {checkpoint_path}")
 
 
 def _dry_run(samples: list[EvalSample]) -> None:
@@ -154,14 +244,18 @@ def _dry_run(samples: list[EvalSample]) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="CommSpec RAG 检索评测")
+    parser = argparse.ArgumentParser(description="CommSpec RAG 检索评测 (plan 全链路)")
     parser.add_argument(
         "--test-set", default=None,
         help="测试集 JSON 路径 (默认: tests/eval/test_set.json)"
     )
     parser.add_argument(
-        "--top-k", type=int, default=20,
-        help="检索 Top-K (默认: 20)"
+        "--checkpoint", default=None,
+        help="checkpoint JSON 路径 (默认: <test-set 同目录>/eval_checkpoint.json)"
+    )
+    parser.add_argument(
+        "--fresh", action="store_true",
+        help="忽略已有 checkpoint, 全量重算"
     )
     parser.add_argument(
         "--dry-run", action="store_true",
@@ -172,7 +266,12 @@ def main():
     test_set = args.test_set or str(
         Path(__file__).resolve().parent / "test_set.json"
     )
-    run_eval(test_set, top_k=args.top_k, dry_run=args.dry_run)
+    run_eval(
+        test_set,
+        dry_run=args.dry_run,
+        checkpoint=args.checkpoint,
+        fresh=args.fresh,
+    )
 
 
 if __name__ == "__main__":

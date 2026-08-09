@@ -385,6 +385,30 @@ class RAGPipeline:
             release=release, series=series, doc_type=doc_type,
         )
 
+    def plan(
+        self,
+        query: str,
+        reranker_enabled: bool = True,
+        release: str | None = None,
+        series: str | None = None,
+        doc_type: str | None = None,
+    ) -> RetrievalContext:
+        """执行完整检索规划 (plan 全链路) — 委托检索规划器.
+
+        与 search() 的区别: plan() 走完整策略链 — 候选池放大至
+        settings.reranker_top_k (默认 100) 后 Cross-Encoder 精排生效,
+        并包含 taxonomy 分解 / 多跳检索 / 图扩展 / filter_noise / release 感知;
+        search() 仅为轻量检索 (候选池=top_k, 精排可能早退).
+
+        Returns:
+            RetrievalContext — 含 results (重排后最终结果) 与
+            initial_results (精排前候选池, 供评测对比初检/重排后召回).
+        """
+        return self._planner.plan(
+            query, reranker_enabled=reranker_enabled,
+            release=release, series=series, doc_type=doc_type,
+        )
+
     def _warmup(self) -> None:
         """预热嵌入模型，避免首次查询加载延迟."""
         try:
