@@ -52,18 +52,27 @@ class LLMClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> str:
-        """发送聊天请求."""
-        try:
-            response = self._client.chat.completions.create(
-                model=self._model,
-                messages=messages,
-                temperature=temperature if temperature is not None else settings.llm_temperature,
-                max_tokens=max_tokens if max_tokens is not None else settings.llm_max_tokens,
-            )
-            return response.choices[0].message.content or ""
-        except Exception as e:
-            logger.error("LLM API 调用失败: %s", e)
-            raise
+        """发送聊天请求.
+
+        DeepSeek 偶发返回空 content (HTTP 200 但 content 为空/None),
+        此处自动重试, 提高回答可用率.
+        """
+        for attempt in range(settings.llm_max_retries + 1):
+            try:
+                response = self._client.chat.completions.create(
+                    model=self._model,
+                    messages=messages,
+                    temperature=temperature if temperature is not None else settings.llm_temperature,
+                    max_tokens=max_tokens if max_tokens is not None else settings.llm_max_tokens,
+                )
+                content = response.choices[0].message.content or ""
+                if content.strip():
+                    return content
+                logger.warning("LLM 返回空 content (第 %d 次), 重试", attempt + 1)
+            except Exception as e:
+                logger.error("LLM API 调用失败: %s", e)
+                raise
+        return ""
 
     def chat_stream(
         self,
@@ -74,24 +83,31 @@ class LLMClient:
         """流式聊天 — 逐段生成文本 (生成器).
 
         SSE 问答的核心: 边生成边推送, 用户无需等待完整回答.
+        DeepSeek 偶发空流: 空流时自动重试.
         """
-        try:
-            stream = self._client.chat.completions.create(
-                model=self._model,
-                messages=messages,
-                temperature=temperature if temperature is not None else settings.llm_temperature,
-                max_tokens=max_tokens if max_tokens is not None else settings.llm_max_tokens,
-                stream=True,
-            )
-            for chunk in stream:
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                if delta and delta.content:
-                    yield delta.content
-        except Exception as e:
-            logger.error("LLM 流式 API 调用失败: %s", e)
-            raise
+        for attempt in range(settings.llm_max_retries + 1):
+            try:
+                stream = self._client.chat.completions.create(
+                    model=self._model,
+                    messages=messages,
+                    temperature=temperature if temperature is not None else settings.llm_temperature,
+                    max_tokens=max_tokens if max_tokens is not None else settings.llm_max_tokens,
+                    stream=True,
+                )
+                parts: list[str] = []
+                for chunk in stream:
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    if delta and delta.content:
+                        parts.append(delta.content)
+                if parts:
+                    yield from parts
+                    return
+                logger.warning("LLM 流式返回空流 (第 %d 次), 重试", attempt + 1)
+            except Exception as e:
+                logger.error("LLM 流式 API 调用失败: %s", e)
+                raise
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """生成文本嵌入 — 根据 EMBEDDING_PROVIDER 使用本地或云端模型."""
