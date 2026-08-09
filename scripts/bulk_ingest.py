@@ -44,6 +44,7 @@ from src.ingestion.extractor import MarkdownSourceExtractor, PandocExtractor  # 
 from src.ingestion.manifest import (  # noqa: E402
     IngestionManifest,
     compare_versions,
+    extract_version,
     parse_3gpp_version,
 )
 from src.ingestion.mps_embedder import MPSChunkedEmbedder  # noqa: E402
@@ -291,6 +292,7 @@ def process_single_docx(
         chunk.content_type = meta["content_type"]
         chunk.spec_role = meta["spec_role"]
         chunk.topic_domain = meta["topic_domain"]
+        chunk.version = extract_version(version, chunk.text)
     return chunks, spec_number, release, version, sha
 
 
@@ -335,6 +337,7 @@ def process_single_markdown(
         chunk.content_type = meta["content_type"]
         chunk.spec_role = meta["spec_role"]
         chunk.topic_domain = meta["topic_domain"]
+        chunk.version = extract_version(version, chunk.text)
     return chunks, spec_number, release, version, sha
 
 
@@ -840,6 +843,11 @@ def main():
             [c.doc_id for c in all_chunks],
             [c.spec_number for c in all_chunks],
             [c.chunk_index for c in all_chunks],
+            metadata=[
+                {"release": c.release, "version": c.version,
+                 "series": c.series, "doc_type": c.doc_type}
+                for c in all_chunks
+            ],
         )
         logger.info("BM25 索引已重建 (%d 条)", len(all_chunks))
     elif stats.get("new", 0) > 0 or stats.get("replaced", 0) > 0:

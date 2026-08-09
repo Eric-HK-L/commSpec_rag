@@ -10,6 +10,7 @@
 from unittest.mock import MagicMock
 
 from src.retriever.milvus_store import (
+    DataType,
     MilvusStore,
     _matches_filter_expr,
     _safe_truncate_bytes,
@@ -121,7 +122,7 @@ class TestRrfFuse:
 
 
 class TestInsertBatchParentFields:
-    """_insert_batch 同步 small-to-big parent 字段 (16→18 列)."""
+    """_insert_batch 同步 small-to-big parent 字段 (含 version, 共 19 列)."""
 
     def test_writes_parent_fields_and_truncates(self):
         store = MilvusStore.__new__(MilvusStore)
@@ -135,9 +136,10 @@ class TestInsertBatchParentFields:
         store._insert_batch([chunk])
 
         data = store._collection.insert.call_args[0][0]
-        assert len(data) == 18, "schema 16 列 + parent_chunk_id + parent_text = 18 列"
-        assert data[16] == [3], "parent_chunk_id (INT64) 应写入第 17 列"
-        stored = data[17][0]
+        assert len(data) == 19, "schema 16 列 + parent_chunk_id + parent_text + version = 19 列"
+        assert data[6] == [""], "version (VARCHAR) 应写入第 7 列, 默认空字符串"
+        assert data[17] == [3], "parent_chunk_id (INT64) 应写入第 18 列"
+        stored = data[18][0]
         assert len(stored.encode("utf-8")) <= 4096, "parent_text 必须 ≤ 4096 字节"
         assert stored.endswith("…"), "超限时应在语义边界截断并附加标记"
 
@@ -147,6 +149,107 @@ class TestInsertBatchParentFields:
         store._insert_batch([Chunk(text="plain chunk", doc_id="d")])
 
         data = store._collection.insert.call_args[0][0]
-        assert len(data) == 18
-        assert data[16] == [0]
-        assert data[17] == [""]
+        assert len(data) == 19
+        assert data[6] == [""]
+        assert data[17] == [0]
+        assert data[18] == [""]
+
+
+class TestVersionField:
+    """Milvus 集合 version 字段 — schema 声明 + _insert_batch 写入."""
+
+    def test_schema_declares_version_field(self, monkeypatch):
+        """create_collection 的 schema 应含 version 字段 (VARCHAR 32, 位于 release 之后)."""
+        import src.retriever.milvus_store as ms
+
+        captured: dict = {}
+
+        class _FakeCollection:
+            def __init__(self, name, schema=None, **kwargs):
+                if schema is not None:
+                    captured["schema"] = schema
+
+            def create_index(self, field_name, index_params):
+                pass
+
+            def load(self):
+                pass
+
+        monkeypatch.setattr(ms.connections, "connect", lambda **kw: None)
+        monkeypatch.setattr(ms.utility, "has_collection", lambda name: False)
+        monkeypatch.setattr(ms, "Collection", _FakeCollection)
+
+        store = MilvusStore()
+        store.create_collection(drop_existing=True)
+
+        fields = captured["schema"].fields
+        names = [f.name for f in fields]
+        assert "version" in names
+        version_field = next(f for f in fields if f.name == "version")
+        assert version_field.dtype == DataType.VARCHAR
+        assert version_field.max_length == 32
+        # version 紧跟 release 之后 (字段顺序与 _insert_batch 列序一致)
+        assert names.index("version") == names.index("release") + 1
+
+    def test_insert_batch_writes_version_column(self):
+        store = MilvusStore.__new__(MilvusStore)
+        store._collection = MagicMock()
+        chunk = Chunk(text="table chunk", doc_id="d", release="R18", version="18.4.0")
+        store._insert_batch([chunk])
+
+        data = store._collection.insert.call_args[0][0]
+        assert len(data) == 19
+        assert data[6] == ["18.4.0"], "version 应写入 release 之后的列"
+
+    def test_insert_batch_version_truncated_to_32(self):
+        """version 超 32 字符时截断到 VARCHAR(32) 上限."""
+        store = MilvusStore.__new__(MilvusStore)
+        store._collection = MagicMock()
+        long_version = "v" * 40
+        store._insert_batch([Chunk(text="t", doc_id="d", version=long_version)])
+
+        data = store._collection.insert.call_args[0][0]
+        assert len(data[6][0]) == 32
+
+    def test_insert_batch_missing_version_defaults_empty(self):
+        store = MilvusStore.__new__(MilvusStore)
+        store._collection = MagicMock()
+        store._insert_batch([Chunk(text="t", doc_id="d")])
+
+        data = store._collection.insert.call_args[0][0]
+        assert data[6] == [""]
+
+    def test_search_dense_output_includes_version(self):
+        """search_dense 输出字段含 version 并回填 SearchResult.version."""
+
+        store = MilvusStore.__new__(MilvusStore)
+        store._collection = MagicMock()
+        store._bm25 = MagicMock()
+        store._connected = True
+
+        def _fake_search(**kwargs):
+            assert "version" in kwargs["output_fields"], "search 输出字段必须包含 version"
+            hits = [
+                MagicMock(
+                    id=1,
+                    distance=0.9,
+                    entity=MagicMock(
+                        get=lambda k, d="": {
+                            "text": "t", "doc_id": "d", "series": 38,
+                            "spec_number": "38.211", "release": "R18",
+                            "version": "18.4.0",
+                            "parent_section_id": "", "parent_title": "",
+                            "chunk_index": 0, "section_number": "",
+                            "section_title": "", "section_path": "",
+                            "doc_type": "3gpp", "content_type": "",
+                            "spec_role": "", "topic_domain": "",
+                            "parent_chunk_id": 0, "parent_text": "",
+                        }.get(k, d),
+                    ),
+                )
+            ]
+            return [hits]
+
+        store._collection.search = _fake_search
+        results = store.search_dense(__import__("numpy").zeros(1024, dtype="float32"), top_k=1)
+        assert results[0].version == "18.4.0"

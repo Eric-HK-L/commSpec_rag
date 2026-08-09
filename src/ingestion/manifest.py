@@ -21,6 +21,23 @@ logger = logging.getLogger(__name__)
 
 # 3GPP 文件名版本提取: "36322-i10" → "i10", "38101-f60" → "f60", "36101-id0" → "id0"
 _3GPP_VERSION_RE = re.compile(r"[.-]([a-z]{1,3}\d{1,3}[a-z]?)$", re.IGNORECASE)
+# 3GPP 发布版本提取: "V18.4.0" → "18.4.0" (从文档内容头部)
+_DOTTED_VERSION_RE = re.compile(r"[Vv](\d{2}\.\d+\.\d+)")
+
+
+def extract_version(version: str | None, text: str = "") -> str:
+    """提取并规范化 chunk 版本号 (纯正则, 无外部依赖).
+
+    优先级:
+      1. 传入 version (文件名/内容解析), 去 V/v 前缀 → "18.4.0" / "i10"
+      2. 从文本头部正则提取 "V18.4.0" 式发布版本
+      3. 提取不到 → ""
+    """
+    v = (version or "").strip()
+    if v:
+        return re.sub(r"^[Vv]", "", v)
+    m = _DOTTED_VERSION_RE.search(text[:800])
+    return m.group(1) if m else ""
 
 
 # ── 数据模型 ──

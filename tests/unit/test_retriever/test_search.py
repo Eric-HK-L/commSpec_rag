@@ -88,3 +88,32 @@ class TestChunkDataclass:
         assert c.series == 38
         assert c.spec_number == "38413"
         assert c.parent_title == "NG Setup"
+
+    def test_version_default_empty(self):
+        c = Chunk(text="t", doc_id="d")
+        assert c.version == ""
+
+    def test_version_set(self):
+        c = Chunk(text="t", doc_id="d", version="18.4.0")
+        assert c.version == "18.4.0"
+
+
+class TestVersionInRetrievalResult:
+    """RetrievalResult 版本字段 — 构造默认 + from_search_result 传递."""
+
+    def test_default_empty(self):
+        r = RetrievalResult(chunk_id=1, text="t", score=0.5)
+        assert r.version == ""
+
+    def test_from_search_result_carries_version(self):
+        sr = SearchResult(
+            chunk_id=1, text="t", score=0.9, doc_id="d",
+            spec_number="38.211", release="R18", version="18.4.0",
+        )
+        r = RetrievalResult.from_search_result(sr)
+        assert r.version == "18.4.0"
+
+    def test_from_search_result_missing_version_defaults(self):
+        sr = SearchResult(chunk_id=1, text="t", score=0.9)
+        r = RetrievalResult.from_search_result(sr)
+        assert r.version == ""

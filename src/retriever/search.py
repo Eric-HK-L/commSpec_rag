@@ -23,6 +23,7 @@ class RetrievalResult:
     series: int = 0
     spec_number: str = ""
     release: str = ""
+    version: str = ""           # 3GPP 版本号, 如 "18.4.0" (支持版本粒度过滤/对比)
     parent_section_id: str = ""
     parent_title: str = ""
     chunk_index: int = 0
@@ -52,6 +53,7 @@ class RetrievalResult:
             series=sr.series,
             spec_number=sr.spec_number,
             release=sr.release,
+            version=getattr(sr, "version", ""),
             parent_section_id=sr.parent_section_id,
             parent_title=sr.parent_title,
             chunk_index=sr.chunk_index,

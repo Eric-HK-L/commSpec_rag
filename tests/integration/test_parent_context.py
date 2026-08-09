@@ -1,6 +1,6 @@
 """small-to-big 集成测试 — mock Milvus 验证 insert 含 parent 字段.
 
-摄入侧: _insert_batch 将 parent_chunk_id/parent_text 写入 Milvus (18 列 schema).
+摄入侧: _insert_batch 将 parent_chunk_id/parent_text 写入 Milvus (19 列 schema, 含 version).
 检索侧: search_dense 输出字段含 parent_text, 经 RetrievalResult 透传.
 """
 
@@ -34,9 +34,10 @@ class TestMilvusInsertParentFields:
             ),
         ])
         data = mock_store._collection.insert.call_args[0][0]
-        assert len(data) == 18
-        assert data[16] == [12]
-        assert data[17] == ["Section full context..."]
+        assert len(data) == 19
+        assert data[6] == [""], "version 列默认空字符串"
+        assert data[17] == [12]
+        assert data[18] == ["Section full context..."]
 
     def test_search_dense_returns_parent_fields(self, mock_store):
         hit = MagicMock()
@@ -44,7 +45,7 @@ class TestMilvusInsertParentFields:
         hit.distance = 0.9
         hit.entity.get.side_effect = lambda k, d=None: {
             "text": "sub chunk", "doc_id": "d", "series": 38,
-            "spec_number": "38.413", "release": "R18",
+            "spec_number": "38.413", "release": "R18", "version": "18.4.0",
             "parent_section_id": "5.3.2", "parent_title": "RRC Setup",
             "chunk_index": 1, "section_number": "", "section_title": "",
             "section_path": "", "doc_type": "3gpp", "content_type": "",

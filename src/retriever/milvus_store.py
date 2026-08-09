@@ -199,6 +199,7 @@ class MilvusStore(VectorStore):
             FieldSchema(name="series", dtype=DataType.INT64),
             FieldSchema(name="spec_number", dtype=DataType.VARCHAR, max_length=64),
             FieldSchema(name="release", dtype=DataType.VARCHAR, max_length=32),
+            FieldSchema(name="version", dtype=DataType.VARCHAR, max_length=32),
             FieldSchema(name="parent_section_id", dtype=DataType.VARCHAR, max_length=256),
             FieldSchema(name="parent_title", dtype=DataType.VARCHAR, max_length=4096),
             FieldSchema(name="chunk_index", dtype=DataType.INT64),
@@ -279,6 +280,7 @@ class MilvusStore(VectorStore):
             [],  # series
             [],  # spec_number
             [],  # release
+            [],  # version
             [],  # parent_section_id
             [],  # parent_title
             [],  # chunk_index
@@ -301,18 +303,19 @@ class MilvusStore(VectorStore):
             data[3].append(c.series)
             data[4].append(c.spec_number[:64] if c.spec_number else "")
             data[5].append(c.release[:32] if c.release else "")
-            data[6].append(c.parent_section_id[:256] if c.parent_section_id else "")
-            data[7].append(_safe_truncate_bytes(c.parent_title, 4096) if c.parent_title else "")
-            data[8].append(c.chunk_index)
-            data[9].append(c.section_number[:64] if c.section_number else "")
-            data[10].append(c.section_title[:512] if c.section_title else "")
-            data[11].append(_safe_truncate_bytes(c.section_path, 4096) if c.section_path else "")
-            data[12].append(c.doc_type[:32] if c.doc_type else "3gpp")
-            data[13].append(c.content_type[:32] if c.content_type else "")
-            data[14].append(c.spec_role[:32] if c.spec_role else "")
-            data[15].append(c.topic_domain[:32] if c.topic_domain else "")
-            data[16].append(c.parent_chunk_id if c.parent_chunk_id else 0)
-            data[17].append(_safe_truncate_bytes(c.parent_text, 4096) if c.parent_text else "")
+            data[6].append((getattr(c, "version", "") or "")[:32])
+            data[7].append(c.parent_section_id[:256] if c.parent_section_id else "")
+            data[8].append(_safe_truncate_bytes(c.parent_title, 4096) if c.parent_title else "")
+            data[9].append(c.chunk_index)
+            data[10].append(c.section_number[:64] if c.section_number else "")
+            data[11].append(c.section_title[:512] if c.section_title else "")
+            data[12].append(_safe_truncate_bytes(c.section_path, 4096) if c.section_path else "")
+            data[13].append(c.doc_type[:32] if c.doc_type else "3gpp")
+            data[14].append(c.content_type[:32] if c.content_type else "")
+            data[15].append(c.spec_role[:32] if c.spec_role else "")
+            data[16].append(c.topic_domain[:32] if c.topic_domain else "")
+            data[17].append(c.parent_chunk_id if c.parent_chunk_id else 0)
+            data[18].append(_safe_truncate_bytes(c.parent_text, 4096) if c.parent_text else "")
 
         try:
             self._collection.insert(data)
@@ -378,7 +381,7 @@ class MilvusStore(VectorStore):
                     expr=f"id > {last_id}",
                     output_fields=[
                         "id", "text", "doc_id", "spec_number", "chunk_index",
-                        "release", "series", "doc_type",
+                        "release", "version", "series", "doc_type",
                     ],
                     limit=batch_size,
                 )
@@ -397,6 +400,7 @@ class MilvusStore(VectorStore):
             chunk_indices.extend(int(r.get("chunk_index", 0)) for r in results)
             metadata.extend({
                 "release": r.get("release", ""),
+                "version": r.get("version", ""),
                 "series": r.get("series", 0),
                 "doc_type": r.get("doc_type", "3gpp"),
             } for r in results)
@@ -449,7 +453,7 @@ class MilvusStore(VectorStore):
             "limit": top_k,
             "output_fields": [
                 "text", "doc_id", "series", "spec_number",
-                "release", "parent_section_id", "parent_title", "chunk_index",
+                "release", "version", "parent_section_id", "parent_title", "chunk_index",
                 "section_number", "section_title", "section_path",
                 "doc_type",
                 "content_type", "spec_role", "topic_domain",
@@ -472,6 +476,7 @@ class MilvusStore(VectorStore):
                     series=entity.get("series", 0),
                     spec_number=entity.get("spec_number", ""),
                     release=entity.get("release", ""),
+                    version=entity.get("version", ""),
                     parent_section_id=entity.get("parent_section_id", ""),
                     parent_title=entity.get("parent_title", ""),
                     chunk_index=entity.get("chunk_index", 0),
@@ -517,6 +522,7 @@ class MilvusStore(VectorStore):
                 chunk_index=chunk_index,
                 series=meta.get("series", 0),
                 release=meta.get("release", ""),
+                version=meta.get("version", ""),
                 doc_type=meta.get("doc_type", "3gpp"),
             ))
         return output
@@ -628,6 +634,7 @@ class MilvusStore(VectorStore):
                     series=r.series,
                     spec_number=r.spec_number,
                     release=r.release,
+                    version=r.version,
                     parent_section_id=r.parent_section_id,
                     parent_title=r.parent_title,
                     chunk_index=r.chunk_index,
@@ -648,6 +655,8 @@ class MilvusStore(VectorStore):
                     spec_number=r.spec_number,
                     chunk_index=r.chunk_index,
                     series=r.series,
+                    release=r.release,
+                    version=r.version,
                     doc_type=r.doc_type,
                     content_type=r.content_type,
                     spec_role=r.spec_role,
