@@ -170,12 +170,52 @@ def compute_retrieval_noise_ratio(results: list[RetrievalResult], threshold: flo
     return noise_count / len(results)
 
 
-def filter_noise(results: list[RetrievalResult], min_score: float = 0.3) -> list[RetrievalResult]:
-    """过滤低分噪声结果."""
-    filtered = [r for r in results if r.score >= min_score]
-    if len(filtered) < len(results):
+def _percentile(values: list[float], percentile: float) -> float:
+    """线性插值分位数 (等价 numpy.percentile 默认 method='linear')."""
+    if not values:
+        return 0.0
+    s = sorted(values)
+    idx = (len(s) - 1) * percentile
+    lo = int(idx)
+    hi = min(lo + 1, len(s) - 1)
+    frac = idx - lo
+    return s[lo] * (1 - frac) + s[hi] * frac
+
+
+def filter_noise(
+    results: list[RetrievalResult],
+    min_score: float | None = None,
+    percentile: float = 0.25,
+) -> list[RetrievalResult]:
+    """过滤低分噪声结果 — 相对/分位数策略.
+
+    分数标定背景: 主结果经 planner._rerank 归一化到 [0,1]; 补充结果
+    (multi_hop / graph_expand / cross_ref) 带 RRF 尺度分数 (≈0.01-0.03) 或
+    rank-based 分数. 旧实现的绝对阈值 (min_score=0.3) 会把 RRF 尺度补充结果全部误杀.
+
+    策略:
+    - 补充结果通道 (_source_tag 非空): score > 0 即保留 — 其分数已由上游归一化
+      到与主结果可比的范围, 不再参与主结果的分位数比较.
+    - 主结果通道: 以主结果分数分布的第 percentile 百分位为阈值, 低于阈值的视为噪声.
+    - 显式契约: 全部被过滤时返回空列表 (不再静默降级为原始结果), 由调用方显式处理.
+
+    向后兼容: 显式传入 min_score 时走旧绝对阈值路径 (至少保留一条).
+    """
+    if min_score is not None:
+        filtered = [r for r in results if r.score >= min_score]
+        return filtered or results
+
+    mains = [r for r in results if not getattr(r, "_source_tag", None)]
+    threshold = _percentile([r.score for r in mains], percentile) if mains else 0.0
+
+    kept = [
+        r for r in results
+        if (getattr(r, "_source_tag", None) and r.score > 0)
+        or (not getattr(r, "_source_tag", None) and r.score >= threshold)
+    ]
+    if len(kept) < len(results):
         logger.debug(
-            "噪声过滤: %d/%d 条结果被移除 (min_score=%.2f)",
-            len(results) - len(filtered), len(results), min_score,
+            "噪声过滤 (分位数 %.0f%%): %d/%d 条结果被移除 (threshold=%.3f)",
+            percentile * 100, len(results) - len(kept), len(results), threshold,
         )
-    return filtered or results  # 至少保留 1 条
+    return kept

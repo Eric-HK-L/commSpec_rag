@@ -103,24 +103,56 @@ def _build_chunk_summary(
 
 # ── 结果合并 ──
 
+def _normalize_supplement_scores(
+    supplement: list[RetrievalResult],
+    original: list[RetrievalResult],
+) -> None:
+    """把补充结果的 RRF 分数 (≈0.01-0.03) min-max 缩放到主结果分数范围 (原地修改).
+
+    主结果经 planner._rerank 归一化到 [0,1], 补充结果若保持原始 RRF 分数,
+    会被 filter_noise 等绝对阈值逻辑误杀. 缩放保持补充结果内部排序.
+    """
+    main_scores = [r.score for r in original]
+    if not main_scores or not supplement:
+        return
+    main_min, main_max = min(main_scores), max(main_scores)
+    sup_scores = [r.score for r in supplement]
+    sup_min, sup_max = min(sup_scores), max(sup_scores)
+
+    if sup_max <= sup_min:
+        mid = (main_min + main_max) / 2.0
+        for r in supplement:
+            r.score = mid
+        return
+
+    span = main_max - main_min
+    for r in supplement:
+        norm = (r.score - sup_min) / (sup_max - sup_min)
+        r.score = main_min + norm * span
+
+
 def _merge_results(
     original: list[RetrievalResult],
     supplement: list[RetrievalResult],
     sub_query_label: str = "",
 ) -> list[RetrievalResult]:
-    """合并原始与补充结果，去重.
+    """合并原始与补充结果，去重 + 补充分数归一化.
 
-    原始结果优先排序，补充结果追加末尾.
+    原始结果优先排序，补充结果追加末尾；补充结果分数归一化到主结果范围,
+    使其与主结果可比.
     """
     merged = list(original)
     seen_ids = {str(r.chunk_id) for r in merged}  # 统一 str 避免 int/str 混合
+    new_supplements: list[RetrievalResult] = []
     for r in supplement:
         if str(r.chunk_id) not in seen_ids:
             seen_ids.add(str(r.chunk_id))
             r._source_tag = "multi_hop"
             if sub_query_label:
                 r._sub_query = sub_query_label
-            merged.append(r)
+            new_supplements.append(r)
+    _normalize_supplement_scores(new_supplements, merged)
+    merged.extend(new_supplements)
     return merged
 
 

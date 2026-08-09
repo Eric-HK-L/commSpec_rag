@@ -180,3 +180,66 @@ class TestFilterNoise:
         results = [_make_result(score=0.1)]
         filtered = filter_noise(results, min_score=0.3)
         assert len(filtered) == 1  # 至少保留一条
+
+
+class TestFilterNoiseRelative:
+    """filter_noise — 相对/分位数策略 (默认路径, 不传 min_score).
+
+    背景: 主结果经 planner._rerank 归一化到 [0,1]; 而 multi_hop 补充结果带
+    原始 RRF 分数 (1/(60+rank), max≈0.033), graph_expand 补充 chunk 带 rank-based
+    分数. 旧的绝对阈值 (min_score=0.3) 会把 RRF 尺度补充结果全部误杀.
+    """
+
+    def _main(self, scores, start_id=100):
+        return [
+            RetrievalResult(
+                chunk_id=start_id + i, text=f"main {i}", score=s,
+                spec_number="38.300", parent_section_id="5.1.2",
+            )
+            for i, s in enumerate(scores)
+        ]
+
+    def _supplement(self, score, tag="multi_hop", chunk_id=900):
+        r = RetrievalResult(
+            chunk_id=chunk_id, text="supplement", score=score,
+            spec_number="38.331", parent_section_id="6.3",
+        )
+        r._source_tag = tag
+        return r
+
+    def test_rrf_scale_supplements_survive(self):
+        """(a) RRF 尺度 (0.01-0.03) 补充结果在过滤后存活, 不被 0.3 绝对阈值误杀."""
+        mains = self._main([0.9, 0.8, 0.7, 0.6, 0.5])
+        supplements = [
+            self._supplement(score=0.033, tag="multi_hop", chunk_id=901),
+            self._supplement(score=0.016, tag="graph_expand", chunk_id=902),
+        ]
+        filtered = filter_noise(mains + supplements)
+        ids = {r.chunk_id for r in filtered}
+        assert 901 in ids and 902 in ids, "补充结果被误杀: RRF 尺度补充结果被绝对阈值过滤"
+
+    def test_true_noise_still_filtered(self):
+        """(b) 真噪声仍被过滤: 低于主结果分位数的主结果 + score=0 的补充被移除."""
+        mains = self._main([0.9, 0.8, 0.7, 0.6, 0.1])
+        noise_supplement = self._supplement(score=0.0, tag="graph_expand", chunk_id=903)
+        filtered = filter_noise(mains + [noise_supplement])
+        ids = {r.chunk_id for r in filtered}
+        # 0.1 低于主结果第 25 百分位 (0.6) → 过滤
+        assert 104 not in ids, "真噪声未被过滤: 低分主结果应被移除"
+        # score=0 的补充 chunk 无法排序/评分 → 过滤
+        assert 903 not in ids, "真噪声未被过滤: score=0 的补充结果应被移除"
+
+    def test_no_silent_empty_downgrade(self):
+        """(c) 无静默空降级: 全部被过滤时返回空列表, 不再返回原始结果."""
+        only_noise = [self._supplement(score=0.0, tag="graph_expand", chunk_id=904)]
+        filtered = filter_noise(only_noise)
+        assert filtered == [], "静默空降级: 全部被过滤时不应悄悄返回原始结果"
+
+    def test_empty_input(self):
+        assert filter_noise([]) == []
+
+    def test_explicit_min_score_still_backward_compatible(self):
+        """显式传 min_score 时保留旧绝对阈值行为 (供旧调用方/测试使用)."""
+        mains = self._main([0.9, 0.8, 0.7, 0.6, 0.5])
+        filtered = filter_noise(mains, min_score=0.3)
+        assert {r.chunk_id for r in filtered} == {100, 101, 102, 103, 104}

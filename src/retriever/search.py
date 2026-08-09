@@ -39,7 +39,7 @@ class RetrievalResult:
 
     @classmethod
     def from_search_result(cls, sr: SearchResult) -> "RetrievalResult":
-        return cls(
+        result = cls(
             chunk_id=sr.chunk_id,
             text=sr.text,
             score=sr.score,
@@ -58,6 +58,10 @@ class RetrievalResult:
             spec_role=sr.spec_role,
             topic_domain=sr.topic_domain,
         )
+        src_tag = getattr(sr, "_source_tag", None)
+        if src_tag:
+            result._source_tag = src_tag
+        return result
 
     def to_context_str(self, index: int = 0) -> str:
         """格式化为 LLM 上下文字符串."""

@@ -133,6 +133,43 @@ class TestMergeResults:
         assert merged[1].chunk_id == "1"
 
 
+class TestMergeResultsSupplementScores:
+    """_merge_results — 补充结果分数归一化到主结果范围, 与主结果可比."""
+
+    def test_supplement_scores_normalized_to_main_range(self):
+        original = [_make_chunk("1", score=0.9), _make_chunk("2", score=0.7)]
+        supplement = [
+            _make_chunk("3", score=0.033),
+            _make_chunk("4", score=0.016),
+        ]
+        merged = _merge_results(original, supplement)
+        sup = [r for r in merged if r.chunk_id in {"3", "4"}]
+        assert all(0.7 <= r.score <= 0.9 for r in sup), \
+            "补充结果仍带 RRF 原始分数, 与主结果 (归一化 [0,1]) 不可比"
+
+    def test_supplement_internal_order_preserved(self):
+        original = [_make_chunk("1", score=0.9), _make_chunk("2", score=0.7)]
+        supplement = [
+            _make_chunk("3", score=0.033),
+            _make_chunk("4", score=0.016),
+        ]
+        merged = _merge_results(original, supplement)
+        sup = [r for r in merged if r.chunk_id in {"3", "4"}]
+        assert sup[0].score > sup[1].score  # RRF 高的补充仍排前面
+
+    def test_supplement_equal_scores_map_to_midpoint(self):
+        original = [_make_chunk("1", score=0.9), _make_chunk("2", score=0.7)]
+        supplement = [_make_chunk("3", score=0.02), _make_chunk("4", score=0.02)]
+        merged = _merge_results(original, supplement)
+        sup = [r for r in merged if r.chunk_id in {"3", "4"}]
+        assert all(r.score == 0.8 for r in sup)
+
+    def test_no_original_keeps_supplement_scores(self):
+        supplement = [_make_chunk("3", score=0.033)]
+        merged = _merge_results([], supplement)
+        assert merged[0].score == 0.033
+
+
 class TestNeedsMultiHop:
 
     def test_low_diversity(self):

@@ -151,11 +151,13 @@ class GraphExpander:
                     seen_specs.add(target_spec)
 
                 # 加载 chunk 的完整 content
-                chunk = self._load_chunk_content(int(ref_id), store)
+                # rank-based 分数 (与 multi_hop 的 RRF k=60 同尺度):
+                # 让补充 chunk 可排序、可被下游评分, 而非硬编码 0.0
+                chunk = self._load_chunk_content(
+                    int(ref_id), store, score=self._rank_score(len(expanded) + 1),
+                )
                 if chunk:
-                    # 标记图扩展来源
-                    if hasattr(chunk, "_source_tag"):
-                        chunk._source_tag = "graph_expand"
+                    chunk._source_tag = "graph_expand"
                     expanded.append(chunk)
 
         if expanded:
@@ -165,7 +167,12 @@ class GraphExpander:
             )
         return expanded
 
-    def _load_chunk_content(self, chunk_id: int, store) -> "SearchResult | None":
+    @staticmethod
+    def _rank_score(rank: int, k: int = 60) -> float:
+        """rank-based 分数, 与 RRF 融合 (milvus_store._rrf_fuse, k=60) 同尺度."""
+        return 1.0 / (k + rank)
+
+    def _load_chunk_content(self, chunk_id: int, store, score: float) -> "SearchResult | None":
         """从 Milvus 根据 chunk_id 加载完整文本。
 
         注意：Milvus auto_id 生成的 id 为 INT64，graph 中的 id 也是 int，
@@ -190,7 +197,7 @@ class GraphExpander:
             return SearchResult(
                 chunk_id=r.get("id", chunk_id),
                 text=r.get("text", ""),
-                score=0.0,  # 图扩展 chunk 无向量分数，赋 0
+                score=score,  # 图扩展 chunk 无向量分数, 用 rank-based 分数排序
                 doc_id=r.get("doc_id", ""),
                 series=r.get("series", 0),
                 spec_number=r.get("spec_number", ""),
