@@ -25,6 +25,20 @@ from src.utils.monitoring import record_ask, record_llm_call
 
 logger = logging.getLogger(__name__)
 
+# LLM 空响应/检索无结果时的兜底文案 — 不写入查询缓存 (空回答缓存 1h 会阻塞重试)
+FALLBACK_ANSWER = "抱歉，模型未能生成回答，请重试或换个问法。"
+NOT_FOUND_ANSWER = "未在规范库中找到相关内容。"
+
+
+def _is_cacheable(response: "RAGResponse") -> bool:
+    """判断回答是否值得写入查询缓存 — 兜底/空回答不缓存.
+
+    DeepSeek 偶发空 content 会触发 FALLBACK_ANSWER, 若缓存 1 小时,
+    用户重试会命中同一空回答. 仅缓存真实回答.
+    """
+    answer = (response.answer or "").strip()
+    return bool(answer) and answer not in (FALLBACK_ANSWER, NOT_FOUND_ANSWER)
+
 
 # ── 语言兜底与流式切片工具 ──
 
@@ -156,7 +170,7 @@ class RAGPipeline:
             record_ask(time.time() - t_start, success=True)
             return RAGResponse(
                 query=query,
-                answer="未在规范库中找到相关内容。",
+                answer=NOT_FOUND_ANSWER,
                 sources=[],
                 verified=True,
                 warnings=[],
@@ -194,7 +208,7 @@ class RAGPipeline:
 
         # Step 5.5: 多语言兜底 — 仅当 LLM 输出语言与用户不符时回译 (正常路径零额外调用)
         if not answer or not answer.strip():
-            answer = "抱歉，模型未能生成回答，请重试或换个问法。"
+            answer = FALLBACK_ANSWER
         if query_lang != "en":
             answer = _ensure_answer_language(answer, query_lang, self._llm)
 
@@ -213,9 +227,10 @@ class RAGPipeline:
             expanded_query=expanded_query,
         )
 
-        # 存入查询缓存
-        with self._cache_lock:
-            self._query_cache[cache_key] = response
+        # 存入查询缓存 — 兜底/空回答不缓存, 避免重试命中同一空结果
+        if _is_cacheable(response):
+            with self._cache_lock:
+                self._query_cache[cache_key] = response
         return response
 
     def _retrieve_context(
@@ -290,7 +305,7 @@ class RAGPipeline:
         if not results:
             yield ("sources", [])
             yield ("done", {
-                "answer": "未在规范库中找到相关内容。",
+                "answer": NOT_FOUND_ANSWER,
                 "verified": True,
                 "warnings": [],
                 "coverage": 0.0,
@@ -343,7 +358,7 @@ class RAGPipeline:
 
         # Step 5.5: 多语言兜底 — 仅当 LLM 输出语言与用户不符时回译 (正常路径零额外调用)
         if not answer or not answer.strip():
-            answer = "抱歉，模型未能生成回答，请重试或换个问法。"
+            answer = FALLBACK_ANSWER
         if query_lang != "en":
             answer = _ensure_answer_language(answer, query_lang, self._llm)
 
@@ -360,8 +375,9 @@ class RAGPipeline:
             coverage=verification["coverage"],
             expanded_query=expanded_query,
         )
-        with self._cache_lock:
-            self._query_cache[cache_key] = response
+        if _is_cacheable(response):
+            with self._cache_lock:
+                self._query_cache[cache_key] = response
         yield ("done", {
             "answer": answer,
             "verified": verification["verified"],
