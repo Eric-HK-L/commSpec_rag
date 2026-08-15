@@ -175,6 +175,11 @@ class Settings(BaseSettings):
     # 多跳检索预算: 控制 LLM 缺口分析轮次与每轮子查询数
     multi_hop_max_rounds: int = 2
     multi_hop_max_sub_queries: int = 3
+    # 检索结果 spec 多样性: 避免 top-k 被单一 spec 挤占, 导致多 spec 题的第二个相关
+    # spec 被挤出前列. 0=禁用; >0=前列每 spec 最多保留 N 条, 超额顺延.
+    # 评测: =2 时 RAN 子集重排 Recall@5 +0.079 (0.768→0.846), 9 题 0.5→1.0;
+    # 机制上不丢结果只重排, 不会把已在 top-k 的 spec 挤出去 (数学上不损 spec 级 recall).
+    diversify_topk_max_per_spec: int = 2
 
     # ── 日志 ──
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"

@@ -266,6 +266,10 @@ class RetrievalPlanner:
                 )
                 online_context = self._online.format_as_context(online_results)
 
+        # Step 3.95: spec 多样性重排 (可选) — 避免单一 spec 霸榜前列
+        if settings.diversify_topk_max_per_spec > 0:
+            results = self._diversify_topk(results, settings.diversify_topk_max_per_spec)
+
         # Step 3.9: small-to-big 父上下文扩展 — 命中子 chunk 附带父 section 文本
         self.expand_parent_context(results)
 
@@ -383,6 +387,31 @@ class RetrievalPlanner:
         if expanded > 0:
             logger.info("相邻 chunk 上下文扩展: %d/%d 条结果已扩充 (±%d)",
                         expanded, min(len(results), top_n), window)
+
+    @staticmethod
+    def _diversify_topk(
+        results: list[RetrievalResult],
+        max_per_spec: int,
+    ) -> list[RetrievalResult]:
+        """按 spec 分散前列排序 — 避免单一 spec 挤占 top-k.
+
+        贪心: 遍历原始 (已重排) 顺序, 每个 spec 在前列最多保留 max_per_spec 条,
+        超额者顺延到末尾 (保持各自原相对顺序)。不丢结果、只重排。
+        单 spec 题不受影响: 该 spec 的前 max_per_spec 条仍在最前。
+        """
+        if max_per_spec <= 0 or len(results) <= 1:
+            return results
+        head: list[RetrievalResult] = []
+        tail: list[RetrievalResult] = []
+        seen: dict[str, int] = {}
+        for r in results:
+            spec = r.spec_number or ""
+            if seen.get(spec, 0) < max_per_spec:
+                head.append(r)
+                seen[spec] = seen.get(spec, 0) + 1
+            else:
+                tail.append(r)
+        return head + tail
 
     # ── 查询翻译/扩展 ──
 
