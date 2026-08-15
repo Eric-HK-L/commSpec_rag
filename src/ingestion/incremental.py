@@ -16,6 +16,8 @@ from pathlib import Path
 
 from src.config import settings
 from src.ingestion.embedder import embedding_text
+from src.ingestion.manifest import extract_version
+from src.ingestion.splitter import build_splitter, classify_chunk
 from src.retriever.milvus_store import _escape_milvus_expr
 from src.retriever.vector_store import VectorStore
 
@@ -114,40 +116,23 @@ class IncrementalIndexer:
         """
         from src.ingestion.embedder import BatchEmbedder
         from src.ingestion.extractor import PandocExtractor
-        from src.ingestion.splitter import HeaderAwareSplitter
 
         extractor = PandocExtractor()
-        splitter = HeaderAwareSplitter()
+        splitter = build_splitter()
         embedder = BatchEmbedder(cache_dir=str(settings.data_abs_dir / "cache" / "embeddings"))
 
         stats = {"inserted": 0, "deleted": 0}
 
         # 处理新增文件
         for fp in new_files:
-            result = extractor.extract_file(fp)
-            if not result.markdown:
+            indexed = self._index_docx(fp, extractor, splitter, embedder)
+            if indexed is None:
                 continue
-
-            doc_meta = {
-                "doc_id": Path(fp).stem,
-                "spec_number": result.spec_number,
-                "release": result.release,
-            }
-            chunks = splitter.split_document(result.markdown, doc_meta)
-
-            texts = [embedding_text(c) for c in chunks]
-            embeddings = embedder.embed_batch(texts)
-            for c, emb in zip(chunks, embeddings):
-                c.embedding = emb
-
-            inserted = self._store.insert(chunks)
-            stats["inserted"] += inserted
-
-            # 更新状态
-            key = self._file_key(fp)
-            self._state[key] = IndexEntry(
-                spec_number=result.spec_number,
-                release=result.release,
+            chunks, spec_number, release = indexed
+            stats["inserted"] += self._store.insert(chunks)
+            self._state[self._file_key(fp)] = IndexEntry(
+                spec_number=spec_number,
+                release=release,
                 source_hash=self._hash_file(Path(fp)),
                 chunk_count=len(chunks),
                 indexed_at=time.time(),
@@ -165,23 +150,14 @@ class IncrementalIndexer:
                 )
                 stats["deleted"] += old_entry.chunk_count
 
-            # 重新处理 (同新增逻辑)
-            result = extractor.extract_file(fp)
-            if not result.markdown:
+            indexed = self._index_docx(fp, extractor, splitter, embedder)
+            if indexed is None:
                 continue
-
-            chunks = splitter.split_document(result.markdown, {"doc_id": Path(fp).stem, "spec_number": result.spec_number, "release": result.release})
-            texts = [embedding_text(c) for c in chunks]
-            embeddings = embedder.embed_batch(texts)
-            for c, emb in zip(chunks, embeddings):
-                c.embedding = emb
-
-            inserted = self._store.insert(chunks)
-            stats["inserted"] += inserted
-
+            chunks, spec_number, release = indexed
+            stats["inserted"] += self._store.insert(chunks)
             self._state[key] = IndexEntry(
-                spec_number=result.spec_number,
-                release=result.release,
+                spec_number=spec_number,
+                release=release,
                 source_hash=self._hash_file(Path(fp)),
                 chunk_count=len(chunks),
                 indexed_at=time.time(),
@@ -200,6 +176,50 @@ class IncrementalIndexer:
 
         self.save_state()
         return stats
+
+    def _index_docx(
+        self,
+        fp: str,
+        extractor,
+        splitter,
+        embedder,
+    ) -> tuple[list, str, str] | None:
+        """提取→分块→元数据标注→嵌入 单篇 DOCX, 与全量路径 (bulk_ingest) 保持一致.
+
+        对齐 scripts/bulk_ingest.py 的 process_single_docx:
+        - doc_meta 含 series / doc_type (ORAN 检测)
+        - 每个 chunk 标注 classify_chunk (content_type / spec_role / topic_domain)
+        - chunk.version 经 extract_version 提取
+
+        Returns:
+            (chunks, spec_number, release) 或 None (提取失败/无正文).
+        """
+        result = extractor.extract_file(fp)
+        if not result.markdown:
+            return None
+
+        path = Path(fp)
+        is_oran = path.stem.upper().startswith("O-RAN") or "ORAN" in str(path.parent).upper()
+        doc_meta = {
+            "doc_id": path.stem,
+            "series": int(result.spec_number.split(".")[0]) if result.spec_number and not is_oran else 0,
+            "spec_number": result.spec_number,
+            "release": result.release,
+            "doc_type": "oran" if is_oran else "3gpp",
+        }
+        chunks = splitter.split_document(result.markdown, doc_meta)
+        for c in chunks:
+            meta = classify_chunk(c.text, c.spec_number, c.parent_title)
+            c.content_type = meta["content_type"]
+            c.spec_role = meta["spec_role"]
+            c.topic_domain = meta["topic_domain"]
+            c.version = extract_version(result.version, c.text)
+
+        texts = [embedding_text(c) for c in chunks]
+        embeddings = embedder.embed_batch(texts)
+        for c, emb in zip(chunks, embeddings):
+            c.embedding = emb
+        return chunks, result.spec_number, result.release
 
     # ── 工具方法 ──
 

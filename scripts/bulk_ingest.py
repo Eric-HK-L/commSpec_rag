@@ -37,7 +37,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.config import ingestion_config, settings  # noqa: E402
+from src.config import settings  # noqa: E402
 from src.ingestion.embedder import BatchEmbedder, embedding_text  # noqa: E402
 from src.ingestion.embedding_cache import EmbeddingCache  # noqa: E402
 from src.ingestion.extractor import MarkdownSourceExtractor, PandocExtractor  # noqa: E402
@@ -48,7 +48,7 @@ from src.ingestion.manifest import (  # noqa: E402
     parse_3gpp_version,
 )
 from src.ingestion.mps_embedder import MPSChunkedEmbedder  # noqa: E402
-from src.ingestion.splitter import HeaderAwareSplitter, classify_chunk  # noqa: E402
+from src.ingestion.splitter import HeaderAwareSplitter, build_splitter, classify_chunk  # noqa: E402
 from src.retriever.milvus_store import MilvusStore  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -753,16 +753,7 @@ def main():
         logger.error("无待处理文件 (--source=%s)", args.source)
         return
 
-    splitter = HeaderAwareSplitter(
-        max_chunk_chars=ingestion_config.chunk_size,
-        chunk_overlap_chars=ingestion_config.chunk_overlap,
-        max_chunk_bytes=55000,
-        chunk_mode=ingestion_config.chunk_mode,  # type: ignore[arg-type]
-        table_max_chars=ingestion_config.table_max_chars,
-        prose_max_chars=ingestion_config.prose_max_chars,
-        max_chunk_hard_chars=ingestion_config.max_chunk_chars,
-        min_chunk_chars=ingestion_config.min_chunk_chars,
-    )
+    splitter = build_splitter()
 
     # 双 extractor: marked 直接读数据集, original 走 pandoc
     md_extractor = MarkdownSourceExtractor()

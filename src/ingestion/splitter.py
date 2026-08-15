@@ -1201,3 +1201,25 @@ class HeaderAwareSplitter:
             if start < 0:
                 start = 0
         return chunks
+
+
+def build_splitter() -> HeaderAwareSplitter:
+    """按 IngestionConfig 统一构造分块器 — 全量/增量摄入共用的唯一工厂.
+
+    背景: 此前 orchestrator / bulk_ingest 用 IngestionConfig 构造, 而 incremental
+    用 HeaderAwareSplitter() 硬编码默认值 (2500/100), 导致两条路径 chunk 边界 /
+    overlap / 大小不一致, 向量空间分叉 (违背 embedding_text 的单一真源原则)。
+    所有摄入路径必须经由此工厂构造, 不得自行 new HeaderAwareSplitter()。
+    """
+    from src.config import ingestion_config
+
+    return HeaderAwareSplitter(
+        max_chunk_chars=ingestion_config.chunk_size,
+        chunk_overlap_chars=ingestion_config.chunk_overlap,
+        max_chunk_bytes=55000,
+        chunk_mode=ingestion_config.chunk_mode,  # type: ignore[arg-type]
+        table_max_chars=ingestion_config.table_max_chars,
+        prose_max_chars=ingestion_config.prose_max_chars,
+        max_chunk_hard_chars=ingestion_config.max_chunk_chars,
+        min_chunk_chars=ingestion_config.min_chunk_chars,
+    )
