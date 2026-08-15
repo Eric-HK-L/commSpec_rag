@@ -66,11 +66,25 @@ _FIELDS = [
 
 
 def read_source_chunks(src: MilvusStore) -> list[dict]:
+    """分页读取源 collection 全部 chunk (Milvus query 单次 limit ≤ 16384)."""
     src.connect()
     src._ensure_connected()
     col = src._collection
     output_fields = [f[0] for f in _FIELDS if f[0] != "dense_vector"]
-    rows = col.query(expr="id >= 0", output_fields=output_fields, limit=300000)
+    rows: list[dict] = []
+    last_id = -1
+    batch = 8000
+    while True:
+        batch_rows = col.query(
+            expr=f"id > {last_id}", output_fields=output_fields, limit=batch,
+        )
+        if not batch_rows:
+            break
+        rows.extend(batch_rows)
+        last_id = batch_rows[-1]["id"]
+        if len(batch_rows) < batch:
+            break
+        logger.info("  已读 %d chunks (last_id=%d)", len(rows), last_id)
     logger.info("读取源 collection %s: %d chunks", src._collection_name, len(rows))
     return rows
 
