@@ -194,6 +194,8 @@ class RetrievalPlanner:
         )
 
         # Step 3.1b: 分类列举查询 → 元数据 boost
+        # (注: 曾尝试对所有查询生效以修复 "LTE 概述压过权威", 但实测 RAN 召回
+        #  -0.026 且 LTE 无改善 — 根因是 36.211 池外漏召而非排序, boost 无效; 回滚)
         if is_taxonomy_query(search_query):
             results = self._apply_metadata_boost(results)
 
