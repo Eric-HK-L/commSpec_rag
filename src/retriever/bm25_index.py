@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import pickle
+import re
 import threading
 from pathlib import Path
 from typing import Optional
@@ -84,10 +85,15 @@ class BM25Indexer:
             logger.info("BM25 索引构建完成 (%d 条, 词表约 %d 词)",
                          n, len(self._bm25.idf) if self._bm25 else 0)
 
+    # 域名感知分词: 规范号(38.211)保持整 token, 连字符/标点按非字母数字切分, 小写化.
+    # 相比纯 split(): "PRACH-preamble" → ["prach", "preamble"], 使 "PRACH preamble" 类查询可命中;
+    # "(38.211)" → ["38.211"], 保留规范号整体而非拆成 "38" "211".
+    _TOKEN_RE = re.compile(r"\d{2}\.\d{3}|[a-z0-9]+")
+
     @staticmethod
     def _tokenize(text: str) -> list[str]:
-        """英文空格分词 + 小写化。"""
-        return text.lower().split()
+        """域名感知分词 — 规范号整 token + 连字符技术词拆分 + 小写化."""
+        return BM25Indexer._TOKEN_RE.findall(text.lower())
 
     # ── 检索 ──
 

@@ -46,7 +46,19 @@ def embedding_text(chunk: Chunk) -> str:
     溯源) 使用。
 
     未来新增分块/摄入路径时, 必须复用本函数, 不得在函数之外自行拼接文本。
+
+    例外: ``embedding_text_mode == "path_text"`` 时, 在正文前拼接 section_path /
+    section_title (层级上下文), 用于 A/B 验证层级路径是否提升向量区分度
+    (docs/optimization/retrieval-quality-analysis.md P0-1)。默认 "text" 保持纯正文。
     """
+    if settings.embedding_text_mode == "path_text":
+        parts: list[str] = []
+        if chunk.section_path:
+            parts.append(chunk.section_path)
+        elif chunk.section_title:
+            parts.append(chunk.section_title)
+        parts.append(chunk.text)
+        return "\n".join(p for p in parts if p)
     return chunk.text
 
 

@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     embedding_device: str = "auto"  # "auto" | "cuda" | "mps" | "cpu" — auto 自动选最优
     # 本地嵌入模型 — BGE-M3 (多语言, 1024-dim, 稠密+稀疏双向量)
     local_embedding_model: str = "BAAI/bge-m3"
+    # 文档侧嵌入文本构成: "text"=纯正文(当前默认); "path_text"=层级路径+标题+正文
+    # 待 A/B 验证是否提升同主题异章节的向量区分度 (docs/optimization/retrieval-quality-analysis.md P0-1)
+    embedding_text_mode: Literal["text", "path_text"] = "text"
 
     # ── Cross-Encoder Reranker ──
     reranker_enabled: bool = True  # 是否启用第二阶段 Cross-Encoder 精排
@@ -118,6 +121,9 @@ class Settings(BaseSettings):
     milvus_host: str = "localhost"
     milvus_port: int = 19530
     milvus_collection_name: str = "TeleComm_specs"
+    # IVF_FLAT 查询探测簇数 (nlist=1024): 32≈仅探测 3% 的簇, 是 ANN 静默漏召回点.
+    # 提高 nprobe 可提升 Dense recall (代价: 查询略慢). 评测初检 Recall@5 对 nprobe 敏感.
+    milvus_nprobe: int = 32
 
     # ── 文档处理 ──
     # chunk_size/chunk_overlap 已迁移至 IngestionConfig (摄入管线专用配置)

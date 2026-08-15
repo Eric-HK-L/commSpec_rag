@@ -445,7 +445,7 @@ class MilvusStore(VectorStore):
 
         query_vec = query_embedding.astype(np.float32).reshape(1, -1)
 
-        search_params = {"metric_type": "COSINE", "params": {"nprobe": 32}}
+        search_params = {"metric_type": "COSINE", "params": {"nprobe": settings.milvus_nprobe}}
         kwargs = {
             "data": query_vec.tolist(),
             "anns_field": "dense_vector",
