@@ -76,14 +76,11 @@ Chunk 里**（`vector_store.py`），只是 `embedding_text()` 只取 `chunk.tex
 （把 chunk 的上下文摘要拼到 chunk 前再嵌入）实测减少 **49%** 检索失败；对协议这种层级文档，
 "上下文" 就是 `section_number + section_title + section_path`。
 
-**建议**：用现有 `tests/eval/run_eval.py` 跑 3 组 A/B（只改 `embedding_text` + 重建索引）：
-
-- A：纯正文（现状基线）
-- B：`{section_path} \n {text}`
-- C：`{section_path} \n {text}`（B）+ 表格 chunk 前注入 `caption + 列头 + 段落前置说明`
-
-成本：一次全量 reindex（已有 `scripts/reindex_bge_m3.py` 与嵌入缓存，可复用）。这是当前
-**性价比最高**的待验证改动。
+**A/B 实测结论（2026-08，61k chunks 重嵌入）**：`section_path + text` 模式**显著变差**——
+RAN 子集重排 Recall@5 从 0.8465 跌到 0.7544（**-0.092**，8 题下降/2 题提升）。层级路径是
+泛化文本，拼在前会稀释正文中"PRACH/DMRS/CSI-RS"等具体术语的 dense 信号。**原 `embedding_text`
+注释的"domain shift"判断是正确的，纯正文是更优选择**。故不再推荐把 section_path 编入向量；
+表格/公式的上下文注入应走 chunk 设计层（见 `chunk-design-analysis.md`），而非简单拼接路径。
 
 ### P0-2 ANN 索引 recall：IVF_FLAT nprobe 只搜了 3% 的簇
 
