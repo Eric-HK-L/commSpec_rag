@@ -283,8 +283,16 @@ class HeaderAwareSplitter:
             next_pos = headers[i + 1][0] if i + 1 < len(headers) else len(text)
             node.end = next_pos
 
-            while len(stack) > 1 and stack[-1].level >= level:
-                stack.pop()
+            if sec_id:
+                # 有编号: 按层级正常 pop
+                while len(stack) > 1 and stack[-1].level >= level:
+                    stack.pop()
+            else:
+                # 无编号标题 (如 RRC 的 IE 定义 "# — *CandidateBeamRS*"):
+                # 不按 # 层级 pop (RRC 的 # 层级混乱, 会切断 §6.3 等编号祖先),
+                # 吸附到栈里最近的编号节点, 使 parent 继承到编号章节。
+                while len(stack) > 1 and not stack[-1].sec_id:
+                    stack.pop()
 
             node.parent = stack[-1]
             stack[-1].children.append(node)
