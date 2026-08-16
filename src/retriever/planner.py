@@ -203,8 +203,8 @@ class RetrievalPlanner:
         results = filter_low_quality(results, settings.max_search_results)
         search_dt = time.time() - t_search
 
-        # Step 3.2: 多跳检索
-        if needs_multi_hop(results):
+        # Step 3.2: 多跳检索 — 触发依据优先 query 跨协议信号, 而非结果多样性
+        if needs_multi_hop(results, query=search_query):
             record_multi_hop()
             logger.info(
                 "触发多跳检索 (多样性=%.2f)",

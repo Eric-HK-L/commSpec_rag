@@ -193,7 +193,7 @@
     "expected_specs": ["38.321", "38.331"],
     "expected_sections": ["5.8"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": true
   },
   {
     "question": "NR RRC 状态（RRC_IDLE / RRC_INACTIVE / RRC_CONNECTED）之间的转移条件和触发方式？",

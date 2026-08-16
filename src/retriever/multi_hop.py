@@ -86,18 +86,21 @@ def _parse_gap_response(response: str) -> tuple[bool, list[str]]:
 
 def _build_chunk_summary(
     chunks: list[RetrievalResult],
-    max_chunks: int = 8,
+    max_chunks: int = 10,
 ) -> str:
     """将检索结果摘要化为缺口分析的输入.
 
-    每个 chunk: [TS xx.xxx §section] 前 120 字符的文本.
+    每条: [TS xx.xxx §section 标题] 前 150 字符正文 — 带 section 标题让 LLM 能
+    判断缺口 (旧版只给 parent_section_id + 120 字符, 信息太薄, 子查询生成质量差).
     """
     lines: list[str] = []
     for i, chunk in enumerate(chunks[:max_chunks]):
         spec = chunk.spec_number or "?"
-        section = chunk.parent_section_id or "?"
-        snippet = chunk.text[:120].replace("\n", " ").strip()
-        lines.append(f"[{spec} §{section}] {snippet}")
+        section = chunk.section_number or chunk.parent_section_id or "?"
+        title = (chunk.section_title or chunk.parent_title or "").strip()
+        snippet = chunk.text[:150].replace("\n", " ").strip()
+        header = f"[{spec} §{section} {title[:40]}]".rstrip()
+        lines.append(f"{header} {snippet}")
     return "\n".join(lines)
 
 
@@ -288,14 +291,57 @@ class MultiHopRetriever:
 
 # ── 便捷函数 ──
 
+# ── 跨协议 query 检测 (多跳触发依据) ──
+# 协议层标记词: 命中 ≥2 个协议层, 或 NR+LTE 跨系统, 或双连接, 判定为跨协议查询.
+# 相比旧的 diversity 启发式 (结果 spec 多样性低才触发), 这个信号直接看 query 本身,
+# 对 "波束失败恢复(PHY→MAC→RRC)" 这类跨层题稳定触发 (旧启发式 diversity=0.27 会漏).
+_LAYER_MARKERS: dict[str, tuple[str, ...]] = {
+    "phy": ("phy", "物理层", "physical layer", "dci", "pdcch", "prach",
+            "dmrs", "csi-rs", "ssb", "harq-ack", "pucch", "pusch", "pdsch", "srs"),
+    "mac": ("mac", "mac ce", "lcp", "drx", "bsr", "phr", "随机接入"),
+    "rlc": ("rlc",),
+    "pdcp": ("pdcp",),
+    "rrc": ("rrc", "测量配置", "系统信息"),
+}
+
+
+def _detect_layers(query: str) -> set[str]:
+    q = query.lower()
+    return {
+        layer
+        for layer, kws in _LAYER_MARKERS.items()
+        if any(kw in q for kw in kws)
+    }
+
+
+def _is_cross_protocol_query(query: str) -> bool:
+    """判断 query 是否为跨协议/跨层查询."""
+    if not query:
+        return False
+    q = query.lower()
+    # 1. 命中多个协议层
+    if len(_detect_layers(q)) >= 2:
+        return True
+    # 2. NR vs LTE 跨系统对比
+    if ("nr" in q or "new radio" in q) and "lte" in q:
+        return True
+    # 3. 双连接/多连接
+    if any(k in q for k in ("双连接", "en-dc", "endc", "mcg", "scg")):
+        return True
+    return False
+
+
 def needs_multi_hop(
     results: list[RetrievalResult],
+    query: str | None = None,
     min_diversity: float = 0.25,
 ) -> bool:
-    """快速判断是否需要多跳检索.
+    """判断是否需要多跳检索.
 
-    启发式: spec_number 多样性过低且跨规范 query → 可能需要多跳.
+    优先用 query 跨协议信号 (跨层/NR-LTE 对比/双连接), 缺失时退回 diversity 启发式.
     """
+    if query and _is_cross_protocol_query(query):
+        return True
     if len(results) < 3:
         return False
     unique_specs = len({r.spec_number for r in results if r.spec_number})
