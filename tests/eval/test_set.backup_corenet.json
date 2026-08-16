@@ -1,0 +1,493 @@
+[
+  {
+    "question": "NR PRACH preamble 格式有哪些？",
+    "expected_specs": ["38.211"],
+    "expected_sections": ["6.3.3"],
+    "difficulty": "easy",
+    "multi_hop": false
+  },
+  {
+    "question": "NR PUSCH 的 DMRS 配置方式",
+    "expected_specs": ["38.211", "38.214"],
+    "expected_sections": ["6.4.1"],
+    "difficulty": "easy",
+    "multi_hop": false
+  },
+  {
+    "question": "NR SSB 的时频结构",
+    "expected_specs": ["38.213", "38.211"],
+    "expected_sections": ["4.1"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "NR BWP 的配置方式与作用",
+    "expected_specs": ["38.211", "38.213", "38.331"],
+    "expected_sections": ["12"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "NR RLC 与 LTE RLC 的区别是什么？",
+    "expected_specs": ["38.322", "36.322"],
+    "expected_sections": ["4.2", "5.2"],
+    "difficulty": "hard",
+    "multi_hop": false
+  },
+  {
+    "question": "5G QoS 模型中的 5QI 如何映射到 QoS Flow？",
+    "expected_specs": ["23.501", "23.503"],
+    "expected_sections": ["5.7", "6.2"],
+    "difficulty": "medium",
+    "multi_hop": true
+  },
+  {
+    "question": "NR PDCP 层的安全保护机制",
+    "expected_specs": ["38.323"],
+    "expected_sections": ["5.8", "5.9"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "NR MAC 层的逻辑信道优先级处理",
+    "expected_specs": ["38.321"],
+    "expected_sections": ["5.4.3"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "NR 载波聚合中 SCell 的激活与去激活流程",
+    "expected_specs": ["38.321", "38.213"],
+    "expected_sections": ["5.9", "5.18"],
+    "difficulty": "hard",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 核心网中 AMF 与 SMF 的交互流程",
+    "expected_specs": ["23.501", "23.502"],
+    "expected_sections": ["4.2.2", "4.3.2"],
+    "difficulty": "hard",
+    "multi_hop": true
+  },
+  {
+    "question": "NR 下行控制信道 PDCCH 的资源分配机制",
+    "expected_specs": ["38.211", "38.213"],
+    "expected_sections": ["7.3", "10.1"],
+    "difficulty": "easy",
+    "multi_hop": false
+  },
+  {
+    "question": "NR PDSCH 的速率匹配规则",
+    "expected_specs": ["38.214"],
+    "expected_sections": ["5.1.4"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 网络切片的标识与选择机制",
+    "expected_specs": ["23.501", "23.502", "24.501"],
+    "expected_sections": ["5.15", "4.15"],
+    "difficulty": "hard",
+    "multi_hop": true
+  },
+  {
+    "question": "NR 上行功率控制的参数配置",
+    "expected_specs": ["38.213", "38.331"],
+    "expected_sections": ["7.1"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "NR 波束管理中的波束失败恢复流程",
+    "expected_specs": ["38.213", "38.321"],
+    "expected_sections": ["6"],
+    "difficulty": "hard",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 系统架构中 N2 接口的功能",
+    "expected_specs": ["38.413", "23.501"],
+    "expected_sections": ["8", "4.2.2"],
+    "difficulty": "medium",
+    "multi_hop": true
+  },
+  {
+    "question": "NR 测量报告的事件触发类型有哪些？",
+    "expected_specs": ["38.331"],
+    "expected_sections": ["5.5"],
+    "difficulty": "easy",
+    "multi_hop": false
+  },
+  {
+    "question": "NR SPS (半持续调度) 的配置与激活",
+    "expected_specs": ["38.321", "38.331"],
+    "expected_sections": ["5.8.2", "6.3.2"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 核心网中 NRF 的服务发现流程",
+    "expected_specs": ["23.501", "23.502"],
+    "expected_sections": ["4.2.8", "4.17"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "NR 双连接中 MCG 与 SCG 的承载类型",
+    "expected_specs": ["37.340", "38.331"],
+    "expected_sections": ["4.2", "4.3"],
+    "difficulty": "hard",
+    "multi_hop": true
+  },
+  {
+    "question": "PDU 会话建立流程中 SMF 如何选择 UPF？",
+    "expected_specs": ["23.501", "23.502"],
+    "expected_sections": ["5.8.2", "4.3.2"],
+    "difficulty": "hard",
+    "multi_hop": true
+  },
+  {
+    "question": "NR 初始接入中 RACH 过程的步骤",
+    "expected_specs": ["38.213", "38.321"],
+    "expected_sections": ["8.1", "5.1"],
+    "difficulty": "easy",
+    "multi_hop": false
+  },
+  {
+    "question": "NR 下行预编码的码本类型",
+    "expected_specs": ["38.214"],
+    "expected_sections": ["5.2"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 注册管理中的移动性注册更新流程",
+    "expected_specs": ["23.502", "24.501"],
+    "expected_sections": ["4.2.2", "5.5.1"],
+    "difficulty": "hard",
+    "multi_hop": true
+  },
+  {
+    "question": "NR HARQ-ACK 反馈的码本确定机制",
+    "expected_specs": ["38.213"],
+    "expected_sections": ["9.1"],
+    "difficulty": "hard",
+    "multi_hop": false
+  },
+
+  {
+    "question": "NR 物理层定义的 TDD 时隙格式有哪些？",
+    "expected_specs": ["38.213"],
+    "expected_sections": ["11.1"],
+    "difficulty": "easy",
+    "multi_hop": false
+  },
+  {
+    "question": "什么是 5QI？如何定义标准化的 5QI 值？",
+    "expected_specs": ["23.501"],
+    "expected_sections": ["5.7.4"],
+    "difficulty": "easy",
+    "multi_hop": false
+  },
+  {
+    "question": "NR 中 PUCCH 格式有哪些，各自用于什么场景？",
+    "expected_specs": ["38.213"],
+    "expected_sections": ["9.2"],
+    "difficulty": "easy",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 网络中 SUPI 和 SUCI 的定义与区别",
+    "expected_specs": ["23.501", "33.501"],
+    "expected_sections": ["5.2.5", "6.12"],
+    "difficulty": "easy",
+    "multi_hop": false
+  },
+  {
+    "question": "NR DCI 格式有多少种？各自的用途是什么？",
+    "expected_specs": ["38.212"],
+    "expected_sections": ["7.3"],
+    "difficulty": "easy",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 中 N1 和 N2 接口分别是什么，功能有何不同？",
+    "expected_specs": ["23.501"],
+    "expected_sections": ["4.2.2"],
+    "difficulty": "easy",
+    "multi_hop": false
+  },
+  {
+    "question": "NR 中 CSI-RS 资源配置包含哪些参数？",
+    "expected_specs": ["38.211", "38.214"],
+    "expected_sections": ["7.4.1", "5.2.2"],
+    "difficulty": "easy",
+    "multi_hop": false
+  },
+  {
+    "question": "什么是 5G 中的 NPN（非公共网络）？其标识方式是什么？",
+    "expected_specs": ["23.501"],
+    "expected_sections": ["5.30"],
+    "difficulty": "easy",
+    "multi_hop": false
+  },
+  {
+    "question": "LTE 无线帧结构中的子帧和时隙如何定义？",
+    "expected_specs": ["36.211"],
+    "expected_sections": ["4"],
+    "difficulty": "easy",
+    "multi_hop": false
+  },
+  {
+    "question": "NR 中 PDSCH 的资源映射类型有哪些？",
+    "expected_specs": ["38.214"],
+    "expected_sections": ["5.1.2"],
+    "difficulty": "easy",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 中 LADN（本地数据网络）的定义及其适用场景",
+    "expected_specs": ["23.501"],
+    "expected_sections": ["5.6.5"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "NR UCI 在 PUSCH 上传输时的复用规则",
+    "expected_specs": ["38.212", "38.213"],
+    "expected_sections": ["6.3", "9.3"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 核心网中 NSSF 的功能及其在网络切片中的作用",
+    "expected_specs": ["23.501", "23.502"],
+    "expected_sections": ["4.2.7", "4.14"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "NR 中 PTRS 的配置目的和资源映射方式",
+    "expected_specs": ["38.211", "38.214"],
+    "expected_sections": ["6.4.2", "5.1.6"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 服务化架构中 NEF 的 API 暴露功能是什么？",
+    "expected_specs": ["23.501", "23.502"],
+    "expected_sections": ["4.2.6", "4.19"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "NR SDAP 层的功能及其与 QoS Flow 的关系",
+    "expected_specs": ["38.300", "23.501"],
+    "expected_sections": ["6.5", "5.7"],
+    "difficulty": "medium",
+    "multi_hop": true
+  },
+  {
+    "question": "LTE 中 PDCCH 的 CCE 聚合级别与 NR 有何不同？",
+    "expected_specs": ["36.213", "38.213"],
+    "expected_sections": ["9.1", "10.1"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 中 URSP（UE 路由选择策略）的定义和作用",
+    "expected_specs": ["23.503"],
+    "expected_sections": ["6.6"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "NR 中 SRS 资源集和 SRS 资源的配置关系",
+    "expected_specs": ["38.211", "38.331"],
+    "expected_sections": ["6.4.1.4", "6.3.2"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 核心网中 PCF 的接入与移动性策略控制",
+    "expected_specs": ["23.503", "23.501"],
+    "expected_sections": ["4.2", "5.3.5"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "NR RRC 连接建立到激活的完整状态转移",
+    "expected_specs": ["38.331", "38.300"],
+    "expected_sections": ["4.2", "5.3"],
+    "difficulty": "medium",
+    "multi_hop": true
+  },
+  {
+    "question": "5G 中 N2 切换流程与 Xn 切换流程的区别",
+    "expected_specs": ["23.502", "38.413"],
+    "expected_sections": ["4.9.1", "9.1"],
+    "difficulty": "medium",
+    "multi_hop": true
+  },
+  {
+    "question": "NR 中 CBG（码块组）重传的配置与操作",
+    "expected_specs": ["38.214", "38.213"],
+    "expected_sections": ["5.1.4", "9.1"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 核心网中 UDM 的数据管理架构与 UDR 的关系",
+    "expected_specs": ["23.501", "23.502"],
+    "expected_sections": ["4.2.4", "4.5"],
+    "difficulty": "medium",
+    "multi_hop": true
+  },
+  {
+    "question": "NR 中 MIMO 的层数与天线端口映射关系",
+    "expected_specs": ["38.211", "38.214"],
+    "expected_sections": ["5", "5.2.4"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 中 eCall over IMS 的呼叫流程是怎样的？",
+    "expected_specs": ["23.167", "23.501"],
+    "expected_sections": ["6", "5.16"],
+    "difficulty": "medium",
+    "multi_hop": true
+  },
+  {
+    "question": "NR 中 4-step RACH 与 2-step RACH 的流程对比",
+    "expected_specs": ["38.213", "38.321"],
+    "expected_sections": ["8.1", "5.1"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 中 NWDAF 的分析数据采集与输出接口",
+    "expected_specs": ["23.288"],
+    "expected_sections": ["5.2", "6"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "V2X 在 5G 中如何通过 PC5 接口实现直连通信？",
+    "expected_specs": ["23.287", "38.300"],
+    "expected_sections": ["5.1", "16.9"],
+    "difficulty": "medium",
+    "multi_hop": true
+  },
+  {
+    "question": "NR 中 PDSCH DMRS 类型 1 和类型 2 的差异与应用场景",
+    "expected_specs": ["38.211"],
+    "expected_sections": ["7.4.1.2"],
+    "difficulty": "medium",
+    "multi_hop": false
+  },
+  {
+    "question": "5G LAN 类型服务如何实现跨 UPF 的组播转发？",
+    "expected_specs": ["23.501", "23.502"],
+    "expected_sections": ["5.29", "4.26"],
+    "difficulty": "hard",
+    "multi_hop": true
+  },
+  {
+    "question": "NR 中 Type I 和 Type II CSI 码本反馈的机制差异",
+    "expected_specs": ["38.214"],
+    "expected_sections": ["5.2.2.2"],
+    "difficulty": "hard",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 中 ATSSS 如何实现接入流量分流与切换？",
+    "expected_specs": ["23.501", "23.503"],
+    "expected_sections": ["5.32", "4.2.11"],
+    "difficulty": "hard",
+    "multi_hop": true
+  },
+  {
+    "question": "NR 中 FR1 与 FR2 频段下 SSB 的子载波间隔配置差异",
+    "expected_specs": ["38.211", "38.213"],
+    "expected_sections": ["4.1", "4.1"],
+    "difficulty": "hard",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 中 NSSAI 在 UE 注册流程中的传递与网络验证过程",
+    "expected_specs": ["23.501", "23.502", "24.501"],
+    "expected_sections": ["5.15.6", "4.2.2.2", "5.5.1"],
+    "difficulty": "hard",
+    "multi_hop": true
+  },
+  {
+    "question": "NR 中跨载波调度的配置条件与 PDCCH 搜索空间设计",
+    "expected_specs": ["38.213", "38.331"],
+    "expected_sections": ["10.1", "6.3.2"],
+    "difficulty": "hard",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 中 URLLC 的 QoS 要求如何在 RAN 中保证？",
+    "expected_specs": ["23.501", "38.300", "38.214"],
+    "expected_sections": ["5.7.2", "12.2", "5.1.3"],
+    "difficulty": "hard",
+    "multi_hop": true
+  },
+  {
+    "question": "NR 中 CORESET 0 的确定过程与 PDCCH-Config 的关系",
+    "expected_specs": ["38.213", "38.331"],
+    "expected_sections": ["13", "6.3.2"],
+    "difficulty": "hard",
+    "multi_hop": true
+  },
+  {
+    "question": "LTE EN-DC 与 NR SA 模式下 PDCP 层的承载配置区别",
+    "expected_specs": ["36.323", "38.323", "37.340"],
+    "expected_sections": ["4.2", "5.1", "4.2"],
+    "difficulty": "hard",
+    "multi_hop": true
+  },
+  {
+    "question": "5G 中 SMF 如何通过 UPF 配置实现 I-SMF/I-UPF 插入？",
+    "expected_specs": ["23.501", "23.502"],
+    "expected_sections": ["5.8.2.4", "4.3.2.3"],
+    "difficulty": "hard",
+    "multi_hop": true
+  },
+  {
+    "question": "NR 中 SR（调度请求）的 PUCCH 资源配置与优先级处理",
+    "expected_specs": ["38.213", "38.321"],
+    "expected_sections": ["9.2.5", "5.4.4"],
+    "difficulty": "hard",
+    "multi_hop": false
+  },
+  {
+    "question": "5G 中 CIoT 优化如何实现控制面数据的小数据包传输？",
+    "expected_specs": ["23.501", "23.502", "24.501"],
+    "expected_sections": ["5.31", "4.25", "6.4"],
+    "difficulty": "hard",
+    "multi_hop": true
+  },
+  {
+    "question": "NR 中 TCI 状态的激活与指示如何关联波束切换？",
+    "expected_specs": ["38.213", "38.321"],
+    "expected_sections": ["5.1.5", "6.1.3.15"],
+    "difficulty": "hard",
+    "multi_hop": true
+  },
+  {
+    "question": "NR 非授权频谱（NR-U）中 LBT 的信道接入流程",
+    "expected_specs": ["38.213", "37.213"],
+    "expected_sections": ["4.2", "4"],
+    "difficulty": "hard",
+    "multi_hop": true
+  },
+  {
+    "question": "5G 边缘计算（MEC）中本地 DNS 和 ULCL UPF 的协作机制",
+    "expected_specs": ["23.501", "23.548"],
+    "expected_sections": ["5.13", "5.2"],
+    "difficulty": "hard",
+    "multi_hop": true
+  }
+]
