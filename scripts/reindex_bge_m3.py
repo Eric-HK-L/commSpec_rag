@@ -62,15 +62,25 @@ def read_chunks_from_collection(store: MilvusStore, label: str) -> list[dict]:
         return []
 
     logger.info("查询 %s 全部 chunks...", store._collection_name)
+    output_fields = [
+        "text", "doc_id", "series", "spec_number",
+        "release", "parent_section_id", "parent_title", "chunk_index",
+    ]
+    # Milvus query 单次 limit ≤ 16384, 需分页 (旧 limit=300000 会直接报错)
+    results: list[dict] = []
+    last_id = -1
+    batch = 8000
     try:
-        results = col.query(
-            expr="id >= 0",
-            output_fields=[
-                "text", "doc_id", "series", "spec_number",
-                "release", "parent_section_id", "parent_title", "chunk_index",
-            ],
-            limit=300000,
-        )
+        while True:
+            batch_rows = col.query(
+                expr=f"id > {last_id}", output_fields=output_fields, limit=batch,
+            )
+            if not batch_rows:
+                break
+            results.extend(batch_rows)
+            last_id = batch_rows[-1]["id"]
+            if len(batch_rows) < batch:
+                break
     except Exception as e:
         logger.error("查询失败: %s", e)
         return []
