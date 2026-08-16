@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 # Markdown 标题正则 — 匹配 1-8 级 (pandoc Annex 用 ######## 级别)
 HEADER_RE = re.compile(r"^(#{1,8})\s+(.+)$", re.MULTILINE)
-# 规范章节编号 (如 "6.1.2  PDU Session Establishment")
-SECTION_NUM_RE = re.compile(r"^(\d+(?:\.\d+)*)\s+(.{3,})$", re.MULTILINE)
+# 规范章节编号 (如 "6.1.2  PDU Session Establishment"; 支持字母后缀 "5.3.5.13b")
+SECTION_NUM_RE = re.compile(r"^(\d+(?:\.\d+)*[a-z]?)\s+(.{3,})$", re.MULTILINE)
 # 纯文本 TOC 章节行 (如 "1 Scope   7") — mammoth 输出降级
 PLAIN_SECTION_RE = re.compile(r"^(\d+(?:\.\d+)*)\s+([A-Z]\w.{2,}?)\s+\d+\s*$", re.MULTILINE)
 
@@ -387,13 +387,17 @@ class HeaderAwareSplitter:
         return leaves
 
     def _get_parent_context(self, node: SectionNode) -> tuple[str, str]:
-        """获取节点的直接父章节编号和标题.
+        """获取节点的父章节编号和标题.
 
-        只取直接父节点 (不拼接祖先链), 完整层级路径见 _build_section_path.
+        向上查找最近的有编号 (sec_id 非空) 祖先 — RRC 规范的 ASN.1 定义标题无编号
+        (如 "#### NR-RRC-Definitions"), 直接父节点 sec_id 为空, 需继承最近的编号祖先
+        (如 §6.2), 否则 parent_section_id 为空导致检索后处理/章节级召回失效。
         """
         parent = node.parent
-        if parent and parent.level > 0:
-            return parent.sec_id, parent.title
+        while parent and parent.level > 0:
+            if parent.sec_id:
+                return parent.sec_id, parent.title
+            parent = parent.parent
         return "", ""
 
     @staticmethod
