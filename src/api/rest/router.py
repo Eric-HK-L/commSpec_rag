@@ -180,7 +180,7 @@ async def ask_endpoint(req: AskRequest) -> AskResponse:
 def _result_to_source(r: RetrievalResult) -> SourceItem:
     return SourceItem(
         chunk_id=r.chunk_id,
-        text=get_image_resolver().resolve(r.text)[:500],
+        text=get_image_resolver().resolve(r.text, r.spec_number)[:500],
         score=round(float(r.score), 4),
         doc_id=r.doc_id,
         series=r.series,
@@ -363,7 +363,7 @@ def _serialize_source(r) -> dict:
     """将 RetrievalResult 序列化为 SSE sources 事件数据."""
     return {
         "chunk_id": str(r.chunk_id),
-        "text": get_image_resolver().resolve(r.text)[:300],
+        "text": get_image_resolver().resolve(r.text, r.spec_number)[:300],
         "score": round(float(r.score), 4),
         "spec_number": r.spec_number,
         "parent_section_id": r.parent_section_id,
