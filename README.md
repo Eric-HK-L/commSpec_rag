@@ -219,13 +219,16 @@ python scripts/bulk_ingest.py
 
 ## 📚 更多文档
 
-| 文档                                                    | 说明                                                  |
-| ------------------------------------------------------- | ----------------------------------------------------- |
-| [文档中心](./docs/README.md)                            | 全部文档总索引（设计/部署/白皮书/计划）               |
-| [架构设计](./docs/design/architecture.md)               | 系统架构、模块详解、数据流、关键决策                  |
-| [离线部署指南](./docs/deployment/offline-deployment.md) | 内网环境离线安装（pip wheels + Docker 镜像）          |
-| [硬件兼容性](./docs/design/hardware-compatibility.md)   | 跨平台运行指南（Intel / NVIDIA GB10 / Apple Silicon） |
-| [Phase 计划](./docs/plans/)                             | 项目演进路线图（Phase 1-4）                           |
+| 文档                                                              | 说明                                                  |
+| ----------------------------------------------------------------- | ----------------------------------------------------- |
+| [文档中心](./docs/README.md)                                      | 全部文档总索引（设计/部署/白皮书/计划）               |
+| [架构设计](./docs/design/architecture.md)                         | 系统架构、模块详解、数据流、关键决策                  |
+| [离线部署指南](./docs/deployment/offline-deployment.md)           | 内网环境离线安装（pip wheels + Docker 镜像）          |
+| [硬件兼容性](./docs/design/hardware-compatibility.md)             | 跨平台运行指南（Intel / NVIDIA GB10 / Apple Silicon） |
+| [Phase 计划](./docs/plans/)                                       | 项目演进路线图（Phase 1-4）                           |
+| [检索优化总结](./docs/optimization/stage-1-summary.md)            | Stage 1 检索质量优化（已验证收益/负面/基线/剩余）     |
+| [检索质量分析](./docs/optimization/retrieval-quality-analysis.md) | 检索根因分析与优化路线图（以代码为准）                |
+| [Chunk 设计分析](./docs/optimization/chunk-design-analysis.md)    | 分块现状、问题清单与优化方向（表格/公式/图片）        |
 
 ## 🧪 测试分层
 
