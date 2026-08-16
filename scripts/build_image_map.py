@@ -31,7 +31,7 @@ def figure_id(alt: str) -> str:
     alt = alt.strip()
     m = re.match(r"^(Figure\s+\S+)", alt)
     if m:
-        return m.group(1)
+        return m.group(1).rstrip(":：")
     return alt[:80]
 
 

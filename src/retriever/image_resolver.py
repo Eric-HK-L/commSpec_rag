@@ -29,7 +29,7 @@ def _figure_id(alt: str) -> str:
     alt = alt.strip()
     m = re.match(r"^(Figure\s+\S+)", alt)
     if m:
-        return m.group(1)
+        return m.group(1).rstrip(":：")
     return alt[:80]
 
 
@@ -75,10 +75,13 @@ class ImageResolver:
 
         def _repl(m: re.Match) -> str:
             alt = m.group(1).strip()
-            rel = spec_map.get(_figure_id(alt))
+            fid = _figure_id(alt)
+            rel = spec_map.get(fid)
             if rel is None:
                 return m.group(0)
-            return f"![{alt}]({self._prefix}/{rel})"
+            # 用短 figure_id 作 alt (而非完整长描述): 长 alt 会占满 source.text 的
+            # [:500] 截断窗口, 使图片 URL 落在截断之后被丢掉。
+            return f"![{fid}]({self._prefix}/{rel})"
 
         return _IMG_TAG_RE.sub(_repl, text)
 
