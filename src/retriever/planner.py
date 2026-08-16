@@ -35,7 +35,7 @@ from src.retriever.cross_ref import _deduplicate_refs, extract_references
 from src.retriever.glossary import expand_abbreviations
 from src.retriever.graph_expander import GraphExpander
 from src.retriever.milvus_store import _escape_milvus_expr
-from src.retriever.multi_hop import MultiHopRetriever, needs_multi_hop
+from src.retriever.multi_hop import MultiHopRetriever, _is_cross_protocol_query, needs_multi_hop
 from src.retriever.online_supplement import OnlineSupplement
 from src.retriever.query_quality import diagnose_quality, evaluate_quality, filter_noise
 from src.retriever.reranker import get_reranker
@@ -270,7 +270,12 @@ class RetrievalPlanner:
 
         # Step 3.95: spec 多样性重排 (可选) — 避免单一 spec 霸榜前列
         if settings.diversify_topk_max_per_spec > 0:
-            results = self._diversify_topk(results, settings.diversify_topk_max_per_spec)
+            max_per_spec = settings.diversify_topk_max_per_spec
+            # 跨协议题需要覆盖多个 spec, 用更激进的上限 (=1) 确保每 spec 至少进前列;
+            # 普通题保持默认 (=2), 避免单 spec 题被无关 spec 稀释
+            if _is_cross_protocol_query(search_query):
+                max_per_spec = 1
+            results = self._diversify_topk(results, max_per_spec)
 
         # Step 3.9: small-to-big 父上下文扩展 — 命中子 chunk 附带父 section 文本
         self.expand_parent_context(results)
