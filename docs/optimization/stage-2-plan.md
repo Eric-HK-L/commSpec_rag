@@ -114,23 +114,35 @@ O-RAN 的 106 张 `.emf` 浏览器不显示，量小暂缓或单独转。
 
 **推荐**：方案 B（零重嵌入、快速见效），先验证前端渲染链路，再决定是否值得为"贴图"重摄入。
 
-### 2.5 章节标注缺失（新发现，P0 评测暴露）
+### 2.5 章节标注缺失（✅ 已修复，Stage 2 首个落地项）
 
-**现状**：**31.2% 的 chunk（20,565 个）section_number 和 parent_section_id 都为空**，主要集中
-在 RRC（38.331/36.331，各 ~2500）与测试规范（38.521/36.521 等）。
+**现状（修复前）**：**31.2% 的 chunk（20,565 个）section_number 和 parent_section_id 都为空**，
+主要集中在 RRC（38.331/36.331）与测试规范。
 
-**影响**：
+**根因（三层）**：
 
-1. 章节级 Recall 被低估（空 section 无法前缀匹配）。
-2. 检索后处理受损：`filter_low_quality`（按 parent_section_id 过滤低质章节）、
-   spec-aware 定向、small-to-big 父上下文，对这批 chunk 全部失效。
+1. 章节编号带字母后缀（`5.3.5.13b`、`5.7.1a`）→ `SECTION_NUM_RE` 只匹配纯数字。
+2. ASN.1 模块标题无编号（`#### NR-RRC-Definitions`）→ 直接父节点 sec_id 空。
+3. IE 定义标题用 `#`（level 1，如 `# — *CandidateBeamRS*`）→ 栈式构建按 `#` 层级 pop
+   切断了 §6.3 等编号祖先，落到 root。
 
-**根因（待排查）**：splitter 的 `_build_section_tree` 只识别 Markdown `#` 标题 + 纯文本 TOC；
-RRC/测试规范的章节结构特殊（ASN.1 定义、消息 IE 等），标题可能不是标准 `#` 格式 → 降级为
-字符分块 → 无 section_number。
+**修复**（`src/ingestion/splitter.py`）：
 
-**修复方向**：先诊断 RRC 规范的标题格式，扩展 splitter 标题识别（如 ASN.1 节、纯文本编号行），
-再重摄入。**这是检索质量的下一个潜在杠杆**（31% chunk 缺上下文，修复可能显著提升召回）。
+1. `SECTION_NUM_RE` 支持字母后缀。
+2. `_get_parent_context` 向上查找最近有编号祖先。
+3. `_build_section_tree` 无编号标题不按 `#` 层级 pop，吸附到最近编号节点。
+
+**效果（实测）**：
+
+| 指标              | 修复前 | 修复后            |
+| ----------------- | ------ | ----------------- |
+| 空 section chunk  | 31.2%  | **2.97%**         |
+| spec 级 Recall@5  | 0.892  | 0.896（不变略升） |
+| spec 级 Recall@10 | 0.942  | 0.963             |
+
+> 章节级 Recall 0.35→0.32 略降，原因是 `test_set.json` 的 `expected_sections` 是粗粒度估计、
+> 需校正，而非修复问题（见 P2 待办）。核心收益是 **31% chunk 恢复了章节上下文**，让
+> `filter_low_quality`/spec-aware 定向/small-to-big 对这批数据重新生效。
 
 ## 3. P2 — 检索微调（边际，低成本）
 
