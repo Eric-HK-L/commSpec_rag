@@ -127,6 +127,15 @@ function Markdown({ content }: { content: string }) {
           </td>
         ),
         hr: () => <hr className="my-4 border-gray-200 dark:border-gray-700" />,
+        img: ({ src, alt }) => (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={src || ""}
+            alt={alt || ""}
+            className="max-w-full h-auto my-2 rounded border border-gray-200 dark:border-gray-700"
+            loading="lazy"
+          />
+        ),
       }}
     >
       {content}

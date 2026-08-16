@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from src import __version__
 from src.api.auth import APIKeyMiddleware
@@ -194,6 +195,14 @@ app.include_router(feedback_router)
 
 # Prometheus /metrics 端点
 app.add_api_route("/metrics", metrics_endpoint, methods=["GET"], include_in_schema=False)
+
+# 图片静态托管 (方案 B 图片展示): /images/<marked 相对路径> → data/documents/marked/<路径>
+_images_dir = settings.documents_marked_dir
+if _images_dir.exists():
+    app.mount("/images", StaticFiles(directory=str(_images_dir)), name="images")
+    logger.info("图片静态托管已启用: /images → %s", _images_dir)
+else:
+    logger.warning("图片目录不存在, 跳过静态托管: %s", _images_dir)
 
 
 # ── 启动辅助函数 ──
