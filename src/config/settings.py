@@ -282,7 +282,7 @@ class IngestionConfig(BaseSettings):
     min_chunk_chars: int = 300           # 小于此值的正文碎片并入相邻 chunk (原子块除外)
 
     # dynamic 模式 — 内容类型感知上限
-    table_max_chars: int = 2000          # 表格 chunk 上限（超此值按行组拆, 每片保留表头）
+    table_max_chars: int = 5000          # 表格 chunk 上限（比正文更大; 实测 2000 行组拆分使 R@5 -0.046, 回滚）
     prose_max_chars: int = 1500          # 纯文本 chunk 上限
     max_chunk_chars: int = 8000          # 绝对上限 — BGE-M3 8192 tokens, 留 ~12% 安全边距
                                          # 超限内容强制在最优边界切开，避免嵌入时静默截断
