@@ -23,6 +23,7 @@ class EvalResult:
     retrieved_specs: list[str]          # 实际检索到的规范编号 (重排后最终列表)
     relevant_ranks: list[int]           # 相关结果在检索列表中的排名 (1-based)
     recall_at_k: dict[int, float] = field(default_factory=dict)
+    section_recall_at_k: dict[int, float] = field(default_factory=dict)  # 章节级召回
     reciprocal_rank: float = 0.0
     ndcg_at_10: float = 0.0
     initial_retrieved_specs: list[str] = field(default_factory=list)  # 精排前候选池
@@ -39,6 +40,8 @@ class EvalReport:
     mrr: float                           # Mean Reciprocal Rank
     ndcg_at_10: float
     initial_recall_at_5: float = 0.0     # 精排前候选池的 Recall@5 (初检召回)
+    section_recall_at_5: float = 0.0     # 章节级 Recall@5
+    section_recall_at_10: float = 0.0    # 章节级 Recall@10
     by_difficulty: dict[str, dict[str, float]] = field(default_factory=dict)
     by_multi_hop: dict[bool, dict[str, float]] = field(default_factory=dict)
 
@@ -67,6 +70,33 @@ def recall_at_k(retrieved_specs: list[str], expected_specs: list[str], k: int) -
     expected_set = {s.lower() for s in expected_specs}
     unique_hits = {s.lower() for s in top_k if s.lower() in expected_set}
     return len(unique_hits) / len(expected_set)
+
+
+def section_recall_at_k(
+    retrieved_pairs: list[tuple[str, str]],
+    expected_specs: list[str],
+    expected_sections: list[str],
+    k: int,
+) -> float:
+    """章节级 Recall@K: 命中需 spec 匹配 expected_specs 且 section 前缀匹配 expected_sections.
+
+    retrieved_pairs: [(spec_number, section_number), ...]. section 前缀匹配:
+    expected "6.3.3" 命中 retrieved "6.3.3" / "6.3.3.1", 不命中 "6.3.2".
+    expected_sections 为空时退化为 spec 级判定。
+    """
+    if not expected_specs:
+        return 1.0
+    exp_specs = {s.lower() for s in expected_specs}
+    exp_sections = [s.lower().lstrip("§") for s in expected_sections if s and s.strip()]
+    matched_specs: set[str] = set()
+    for spec, section in retrieved_pairs[:k]:
+        spec_l = spec.lower()
+        if spec_l not in exp_specs:
+            continue
+        sec = (section or "").lower().lstrip("§")
+        if not exp_sections or any(sec.startswith(es) for es in exp_sections):
+            matched_specs.add(spec_l)
+    return len(matched_specs) / len(exp_specs)
 
 
 def reciprocal_rank(relevant_ranks: list[int]) -> float:
@@ -99,6 +129,7 @@ def evaluate_one(
     sample: EvalSample,
     retrieved_specs: list[str],
     initial_specs: list[str] | None = None,
+    retrieved_pairs: list[tuple[str, str]] | None = None,
 ) -> EvalResult:
     """对单条样本计算全部指标.
 
@@ -106,9 +137,11 @@ def evaluate_one(
         sample: 评测样本
         retrieved_specs: 重排后最终检索到的规范编号
         initial_specs: 精排前候选池的规范编号 (初检召回; None 则不计算)
+        retrieved_pairs: [(spec, section), ...] 用于章节级召回 (None 则不计算)
     """
     ranks = compute_relevant_ranks(retrieved_specs, sample.expected_specs)
     initial = list(initial_specs or [])
+    pairs = list(retrieved_pairs or [])
     return EvalResult(
         sample=sample,
         retrieved_specs=retrieved_specs,
@@ -117,6 +150,11 @@ def evaluate_one(
             5: recall_at_k(retrieved_specs, sample.expected_specs, 5),
             10: recall_at_k(retrieved_specs, sample.expected_specs, 10),
             20: recall_at_k(retrieved_specs, sample.expected_specs, 20),
+        },
+        section_recall_at_k={
+            5: section_recall_at_k(pairs, sample.expected_specs, sample.expected_sections, 5),
+            10: section_recall_at_k(pairs, sample.expected_specs, sample.expected_sections, 10),
+            20: section_recall_at_k(pairs, sample.expected_specs, sample.expected_sections, 20),
         },
         reciprocal_rank=reciprocal_rank(ranks),
         ndcg_at_10=ndcg_at_k(retrieved_specs, sample.expected_specs, 10),
@@ -138,6 +176,8 @@ def evaluate_batch(results: list[EvalResult]) -> EvalReport:
     r5 = sum(r.recall_at_k.get(5, 0) for r in results) / n
     r10 = sum(r.recall_at_k.get(10, 0) for r in results) / n
     r20 = sum(r.recall_at_k.get(20, 0) for r in results) / n
+    sr5 = sum(r.section_recall_at_k.get(5, 0) for r in results) / n
+    sr10 = sum(r.section_recall_at_k.get(10, 0) for r in results) / n
     mrr = sum(r.reciprocal_rank for r in results) / n
     ndcg10 = sum(r.ndcg_at_10 for r in results) / n
     initial_r5 = sum(r.initial_recall_at_k.get(5, 0) for r in results) / n
@@ -177,6 +217,8 @@ def evaluate_batch(results: list[EvalResult]) -> EvalReport:
         recall_at_5=r5,
         recall_at_10=r10,
         recall_at_20=r20,
+        section_recall_at_5=sr5,
+        section_recall_at_10=sr10,
         mrr=mrr,
         ndcg_at_10=ndcg10,
         initial_recall_at_5=initial_r5,

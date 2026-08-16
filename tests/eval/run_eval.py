@@ -61,6 +61,8 @@ def format_report(report: EvalReport, elapsed_ms: float) -> str:
         f"| Recall@5 (search路径参照) | {LEGACY_SEARCH_RECALL_AT_5:.4f} | legacy 基线 |",
         f"| Recall@10 | {report.recall_at_10:.4f} | ≥ 0.85 |",
         f"| Recall@20 | {report.recall_at_20:.4f} | ≥ 0.90 |",
+        f"| 章节级 Recall@5 | {report.section_recall_at_5:.4f} | 参考 |",
+        f"| 章节级 Recall@10 | {report.section_recall_at_10:.4f} | 参考 |",
         f"| MRR | {report.mrr:.4f} | ≥ 0.70 |",
         f"| NDCG@10 | {report.ndcg_at_10:.4f} | ≥ 0.75 |",
     ]
@@ -138,6 +140,17 @@ def _extract_specs(results) -> list[str]:
     ]
 
 
+def _extract_spec_sections(results) -> list[tuple[str, str]]:
+    """从检索结果列表提取 [(spec_number, section_number), ...] 用于章节级召回."""
+    pairs = []
+    for r in results:
+        if not hasattr(r, 'spec_number') or not r.spec_number:
+            continue
+        section = getattr(r, 'section_number', '') or getattr(r, 'parent_section_id', '') or ''
+        pairs.append((r.spec_number, section))
+    return pairs
+
+
 def run_eval(
     test_set_path: str,
     dry_run: bool = False,
@@ -193,18 +206,22 @@ def run_eval(
                 sample,
                 entry["retrieved_specs"],
                 initial_specs=entry.get("initial_specs", []),
+                retrieved_pairs=entry.get("retrieved_pairs", []),
             ))
             continue
         try:
             ctx = pipeline.plan(sample.question)
             retrieved_specs = _extract_specs(ctx.results)
             initial_specs = _extract_specs(getattr(ctx, "initial_results", []))
+            retrieved_pairs = _extract_spec_sections(ctx.results)
             results.append(evaluate_one(
                 sample, retrieved_specs, initial_specs=initial_specs,
+                retrieved_pairs=retrieved_pairs,
             ))
             cached[key] = {
                 "retrieved_specs": retrieved_specs,
                 "initial_specs": initial_specs,
+                "retrieved_pairs": retrieved_pairs,
             }
             _save_checkpoint(checkpoint_path, cached)
             if (i + 1) % 10 == 0:

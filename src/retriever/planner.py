@@ -720,7 +720,7 @@ class RetrievalPlanner:
             {"role": "user", "content": f"将以下问题分解为覆盖所有维度的子查询：\n\n{query}"},
         ]
         try:
-            response = self._llm.chat(messages, temperature=0.3, max_tokens=1024)
+            response = self._llm.chat(messages, temperature=0.0, max_tokens=1024)
             sub_queries = [
                 line.strip()
                 for line in response.strip().split("\n")
