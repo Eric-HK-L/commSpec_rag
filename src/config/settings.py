@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     reranker_model: str = "BAAI/bge-reranker-v2-m3"  # 本地 reranker 模型路径或 HuggingFace ID
     reranker_top_k: int = 100  # 送入 reranker 的候选数 (混合检索结果取 top-N)
     reranker_device: str = "auto"  # "auto" | "cuda" | "mps" | "cpu"
+    reranker_max_length: int = 1024  # CrossEncoder 输入截断长度 (chunk 可达 8000 字符, 待 A/B 是否增大)
 
     @property
     def resolved_embedding_device(self) -> str:

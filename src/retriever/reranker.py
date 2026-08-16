@@ -79,7 +79,7 @@ class CrossEncoderReranker:
                 model_id,
                 device=device,
                 trust_remote_code=True,  # BGE-Reranker 需要此选项
-                max_length=1024,  # 模型训练用 1024, 默认 512 会截断长 chunk
+                max_length=settings.reranker_max_length,
             )
         return self._model
 
