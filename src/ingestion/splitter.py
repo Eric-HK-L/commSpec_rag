@@ -83,12 +83,10 @@ def classify_chunk(
     Returns:
         {"content_type": ..., "spec_role": ..., "topic_domain": ...}
     """
-    # 1. content_type — 表格判定基于 section 上下文 (结构 + 表头特征 + 表格编号):
-    #    a) 直接检测 chunk 文本中的 pipe/grid 表格结构 (_contains_table)
-    #    b) section 内表格编号引用 (Table 6.3.3.2-1) — 标题不含 "table" 但以
-    #       表号开头的参数表 chunk (如 38.211 §6.3.3 PRACH preamble 表)
-    #    c) 父章节标题含 table 表头特征
-    if _contains_table(text) or _contains_table_reference(text) or any(
+    # 1. content_type — 表格判定只认真实表结构 (_contains_table) 或父章节标题含 table.
+    #    移除 _contains_table_reference: "see Table 6.3.3.2-1" 只是正文引用, 并非
+    #    表格本身, 曾导致 48% chunk 被误判为 parameter_table (元数据加权形同虚设).
+    if _contains_table(text) or any(
         kw in parent_title for kw in TABLE_KEYWORDS
     ):
         content_type = "parameter_table"
@@ -610,8 +608,13 @@ class HeaderAwareSplitter:
                     chunks.append(sub)
                     idx += 1
             elif is_table:
-                # 超大表格：按行组拆分（保留表头），复用已有逻辑
-                sub_texts = self._split_oversized(seg_text)
+                # 超大表格：按表格类型走对应行组拆分 (保留表头 + caption)
+                if seg_type == "pipe_table":
+                    sub_texts = self._split_pipe_table_rows(seg_text)
+                elif seg_type == "grid_table":
+                    sub_texts = self._split_grid_table_rows(seg_text)
+                else:  # math_block 等
+                    sub_texts = self._split_oversized(seg_text)
                 for sub_text in sub_texts:
                     for sub in self._fit_byte_limit(
                         sub_text, doc_id, series, spec_number,
@@ -854,7 +857,6 @@ class HeaderAwareSplitter:
 
         # ── 4. 合成表头: 文档上下文 + 表格列头 ──
         header_lines = doc_context + lines[table_start:col_header_end]
-        header_bytes = sum(len(line.encode("utf-8")) + 1 for line in header_lines)
 
         # ── 5. 收集数据行组 (所有 + 线为边界, 中间内容自动归组) ──
         # 规范文档表格的 Pandoc 输出极其异构:
@@ -884,7 +886,7 @@ class HeaderAwareSplitter:
         if not groups:
             return [text]
 
-        # ── 6. 行组合并到 max_chunk_bytes ──
+        # ── 6. 行组合并到 table_max_chars (字符, 语义单元化) ──
         def _build_table(row_groups: list[list[str]]) -> str:
             """用表头 + 行组构建子表文本."""
             all_lines = list(header_lines)
@@ -892,50 +894,98 @@ class HeaderAwareSplitter:
                 all_lines.extend(bg)
             return "\n".join(all_lines)
 
+        # 用字符数而非字节数, 目标 = table_max_chars (大表拆成更小的自描述行组)
+        split_limit = self.table_max_chars
+        header_chars = sum(len(line) + 1 for line in header_lines)
+
         result: list[str] = []
         buf_groups: list[list[str]] = []
-        buf_bytes = header_bytes
+        buf_chars = header_chars
 
         for g in groups:
-            g_bytes = sum(len(ln.encode("utf-8")) + 1 for ln in g)
+            g_chars = sum(len(ln) + 1 for ln in g)
 
-            if g_bytes > self.max_chunk_bytes:
+            if g_chars > split_limit:
                 # 合并单元格: 单行组超大 → 先 flush 已缓存行组
                 if buf_groups:
                     result.append(_build_table(buf_groups))
                     buf_groups = []
-                    buf_bytes = header_bytes
+                    buf_chars = header_chars
 
                 # 行组内按换行拆分 (每段仍带表头)
                 inner_buf: list[str] = []
-                inner_bytes = header_bytes
+                inner_chars = header_chars
                 for line in g:
-                    lb = len(line.encode("utf-8")) + 1
-                    if inner_bytes + lb > self.max_chunk_bytes and inner_buf:
+                    lc = len(line) + 1
+                    if inner_chars + lc > split_limit and inner_buf:
                         result.append("\n".join(header_lines + inner_buf))
                         inner_buf = [line]
-                        inner_bytes = header_bytes + lb
+                        inner_chars = header_chars + lc
                     else:
                         inner_buf.append(line)
-                        inner_bytes += lb
+                        inner_chars += lc
                 if inner_buf:
                     result.append("\n".join(header_lines + inner_buf))
-            elif buf_bytes + g_bytes > self.max_chunk_bytes and buf_groups:
+            elif buf_chars + g_chars > split_limit and buf_groups:
                 result.append(_build_table(buf_groups))
                 buf_groups = [g]
-                buf_bytes = header_bytes + g_bytes
+                buf_chars = header_chars + g_chars
             else:
                 buf_groups.append(g)
-                buf_bytes += g_bytes
+                buf_chars += g_chars
 
         if buf_groups:
             result.append(_build_table(buf_groups))
 
         logger.debug(
-            "Grid Table 拆分: %dB → %d 子表 (均 ≤ %dB)",
-            len(text.encode("utf-8")),
-            len(result),
-            max(len(r.encode("utf-8")) for r in result) if result else 0,
+            "Grid Table 拆分: %d chars → %d 子表 (上限 %d)",
+            len(text), len(result), split_limit,
+        )
+        return result if result else [text]
+
+    def _split_pipe_table_rows(self, text: str) -> list[str]:
+        """拆分超大 pipe 表 (marked 数据集) — 每片保留表头(列名+分隔行)+caption 上下文.
+
+        3GPP marked 数据集的表格是 pipe 表 (|---| 分隔), 此前 >table_max_chars 的
+        pipe 表走 _split_text_by_lines 兜底 (换行拆分, 破坏表结构)。此函数按行组
+        语义拆分, 目标 table_max_chars, 每片自描述。
+        """
+        lines = text.split("\n")
+
+        # 找表头起始 (第一个 pipe 行)
+        table_start = 0
+        for i, line in enumerate(lines):
+            if PIPE_TABLE_LINE.match(line.strip()):
+                table_start = i
+                break
+
+        doc_context = lines[:table_start]  # caption / section 说明
+        # 表头 = 列名行 + 分隔行 (至少 2 行)
+        header_end = table_start + 2
+        header_lines = doc_context + lines[table_start:header_end]
+        header_chars = sum(len(line) + 1 for line in header_lines)
+
+        data_lines = lines[header_end:]
+        split_limit = self.table_max_chars
+
+        result: list[str] = []
+        buf: list[str] = []
+        buf_chars = header_chars
+        for line in data_lines:
+            lc = len(line) + 1
+            if buf_chars + lc > split_limit and buf:
+                result.append("\n".join(header_lines + buf))
+                buf = [line]
+                buf_chars = header_chars + lc
+            else:
+                buf.append(line)
+                buf_chars += lc
+        if buf:
+            result.append("\n".join(header_lines + buf))
+
+        logger.debug(
+            "Pipe Table 拆分: %d chars → %d 子表 (上限 %d)",
+            len(text), len(result), split_limit,
         )
         return result if result else [text]
 

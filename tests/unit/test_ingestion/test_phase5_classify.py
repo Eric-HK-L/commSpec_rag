@@ -57,11 +57,10 @@ class TestClassifyChunkContentType:
         result = classify_chunk(text, "38.101", "1 Scope")
         assert result["content_type"] == "overview"
 
-    def test_table_reference_caption_detected(self):
-        """仅含表格编号标题 (Table 6.3.3.2-1, 无 pipe/grid 结构) → parameter_table.
+    def test_table_reference_caption_not_table(self):
+        """仅含表格编号标题 (Table 6.3.3.2-1, 无 pipe/grid 结构) → overview.
 
-        38.211 §6.3.3 PRACH preamble 表: 标题不含 "table" 单词, 但 chunk 以
-        "Table 6.3.3.2-1: PRACH preamble formats" 表号开头 — 必须识别为参数表.
+        表号引用/标题不是表格本体, 不应判为 parameter_table (避免过度分类).
         """
         text = (
             "Table 6.3.3.2-1: PRACH preamble formats.\n"
@@ -69,22 +68,22 @@ class TestClassifyChunkContentType:
             "listed in the table above."
         )
         result = classify_chunk(text, "38.211", "6.3.3.2 PRACH preamble formats")
-        assert result["content_type"] == "parameter_table"
+        assert result["content_type"] == "overview"
 
-    def test_table_reference_inline_detected(self):
-        """正文引用表格编号 (see Table 6.3.3.2-1) → parameter_table."""
+    def test_table_reference_inline_not_table(self):
+        """正文引用表格编号 (see Table 6.3.3.2-1) → overview (非表结构)."""
         text = (
             "The subcarrier spacing for the PRACH preamble is determined by the "
             "configuration in Table 6.3.3.2-1, and shall be as specified therein."
         )
         result = classify_chunk(text, "38.211", "6.3.3 PRACH preamble generation")
-        assert result["content_type"] == "parameter_table"
+        assert result["content_type"] == "overview"
 
-    def test_table_reference_underscore_separator(self):
-        """表格编号支持 en-dash/em-dash 分隔符 (Table 4.1–1 / Table 4.1—1)."""
+    def test_table_reference_underscore_separator_not_table(self):
+        """表格编号引用 (Table 4.1–1 / 4.1—1) 不误判为参数表."""
         text = "The mapping is given in Table 4.1–1 and Table 4.1—1 of this specification."
         result = classify_chunk(text, "38.211", "4.1 Mapping")
-        assert result["content_type"] == "parameter_table"
+        assert result["content_type"] == "overview"
 
     def test_plain_table_word_not_detected(self):
         """无编号的 "table" 单词引用 (非 3GPP 表号格式) 不应误判为参数表."""
@@ -115,10 +114,10 @@ class TestClassifyChunkSpecRole:
         result = classify_chunk("text", "38.101", "Scope")
         assert result["spec_role"] == "supporting"
 
-    def test_non_38_series_supporting(self):
-        """36 系列规范 → supporting."""
+    def test_lte_rrc_authoritative(self):
+        """36.331 (LTE RRC) 是权威规范 → authoritative (AUTHORITATIVE_SPECS 已补 36 系)."""
         result = classify_chunk("text", "36.331", "RRC protocol specification")
-        assert result["spec_role"] == "supporting"
+        assert result["spec_role"] == "authoritative"
 
 
 # ════════════════════════════════════════════════════════════════
@@ -291,10 +290,10 @@ class TestConstants:
     def test_authoritative_specs_not_empty(self):
         assert len(AUTHORITATIVE_SPECS) > 0
 
-    def test_authoritative_only_38_series(self):
-        """权威规范应都是 38 系列（当前设计）."""
+    def test_authoritative_38_and_36_series(self):
+        """权威规范应覆盖 NR(38) 与 LTE(36) 的 PHY/MAC/RRC."""
         for spec in AUTHORITATIVE_SPECS:
-            assert spec.startswith("38."), f"{spec} 不是 38 系列"
+            assert spec.startswith(("38.", "36.")), f"{spec} 不是 38/36 系列"
 
     def test_definition_keywords_contain_expected(self):
         assert "definition" in DEFINITION_KEYWORDS
