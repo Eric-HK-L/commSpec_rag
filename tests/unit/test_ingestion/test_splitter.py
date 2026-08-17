@@ -252,14 +252,15 @@ class TestMergeSmallChunks:
         assert out[0].text == "A" * 200 + "\n\n" + "B" * 1000
 
     def test_atomic_table_chunk_protected(self):
-        """小表格 chunk 不参与合并 — 既不并入邻居也不被邻居吸收."""
+        """小表格 chunk (< min_chunk_chars) 并入相邻正文 — 避免孤立低密度碎片."""
         s = self._splitter()
         table = self._chunk("| Parameter |\n|-----------|\n| A         |", 1)
         out = s._merge_small_chunks([
             self._chunk("A" * 1000, 0), table, self._chunk("B" * 1000, 2),
         ])
-        assert len(out) == 3  # 表格保持独立 chunk
-        assert "| Parameter |" in out[1].text
+        assert len(out) == 2  # 小表格并入前一个正文 chunk
+        assert "| Parameter |" in out[0].text
+        assert "| Parameter |" not in out[1].text
 
     def test_consecutive_smalls_all_merged(self):
         s = self._splitter()
@@ -299,7 +300,7 @@ class TestMergeSmallChunksEndToEnd:
         assert "Tiny residual paragraph" in chunks[0].text  # 并入前一个 chunk
 
     def test_small_table_survives_merge(self):
-        """全链路: 小表格 chunk 即使 < min_chunk_chars 也保持独立."""
+        """全链路: 小表格 chunk (< min_chunk_chars) 并入相邻正文, 表格结构完整."""
         splitter = HeaderAwareSplitter(
             max_chunk_chars=1000, prose_max_chars=1000,
             chunk_overlap_chars=0, min_chunk_chars=300,
@@ -310,9 +311,9 @@ class TestMergeSmallChunksEndToEnd:
         doc = "# 5.1 Test Section\n\n" + "\n\n".join([p1, table, p3])
 
         chunks = splitter.split_document(doc)
-        assert len(chunks) == 3
+        assert len(chunks) == 2  # 小表格并入相邻正文, 不再孤立
         table_chunks = [c for c in chunks if "Parameter" in c.text]
-        assert len(table_chunks) == 1, "表格 chunk 必须保持独立"
+        assert len(table_chunks) == 1, "表格结构必须完整保留"
         assert "|-----------|" in table_chunks[0].text
 
 

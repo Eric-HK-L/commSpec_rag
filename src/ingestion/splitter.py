@@ -37,6 +37,8 @@ MATH_BLOCK_DELIM = re.compile(r'^\$\$$')
 # 导致多列表格被当 prose 切碎 — SSB 表 7.4.3.1-1 等核心内容丢失)
 PIPE_TABLE_LINE = re.compile(r'^\|.+\|$')
 PIPE_TABLE_SEP = re.compile(r'^\|[\s\-:|]+\|$')
+# HTML Table: <table ...> 开头 (O-RAN marked 数据集用 HTML 表格, 此前未被原子保护)
+HTML_TABLE_START = re.compile(r'^\s*<table', re.IGNORECASE)
 
 # ── Chunk 元数据规则分类 ──
 
@@ -489,6 +491,21 @@ class HeaderAwareSplitter:
                     segments.append(("pipe_table", '\n'.join(lines[start_i:i])))
                     continue
 
+            # HTML Table (O-RAN): <table> 到 </table>
+            if HTML_TABLE_START.match(stripped):
+                if prose_buf:
+                    segments.append(("prose", '\n'.join(prose_buf)))
+                    prose_buf = []
+                start_i = i
+                i += 1
+                while i < n:
+                    if '</table>' in lines[i].lower():
+                        i += 1
+                        break
+                    i += 1
+                segments.append(("html_table", '\n'.join(lines[start_i:i])))
+                continue
+
             prose_buf.append(lines[i])
             i += 1
 
@@ -698,19 +715,20 @@ class HeaderAwareSplitter:
         return stripped.startswith("$$") and "$$" in stripped[2:]
 
     def _merge_small_chunks(self, chunks: list[Chunk]) -> list[Chunk]:
-        """合并过小 chunk — 向前并入优先, 原子块 (表格/公式) 永不参与.
+        """合并过小 chunk — 向前并入优先, 大原子块保持完整.
 
         规则:
-        - 正文 chunk 长度 < min_chunk_chars → 视为碎片
-        - 碎片优先并入前一个非原子 chunk (向前); 否则并入下一个非原子 chunk
-        - 原子块 chunk 既不被并入也不作为合并目标 (表格完整性保护)
+        - 长度 < min_chunk_chars 的正文碎片 或 小原子块(小表/公式) → 视为可合并碎片
+          (小原子块孤立存在 dense 质量差; 整块合并不破坏其结构)
+        - 大原子块(≥min_chunk_chars 的表/公式) 保持完整, 不参与合并
+        - 合并目标必须是正文 (非原子块), 避免破坏原子块完整性
         - 合并后长度不超 max_chunk_hard (BGE-M3 8192 token 安全上限)
         """
         if self.min_chunk_chars <= 0 or len(chunks) < 2:
             return chunks
 
         def _is_fragment(c: Chunk) -> bool:
-            return len(c.text) < self.min_chunk_chars and not self._is_atomic_chunk(c.text)
+            return len(c.text) < self.min_chunk_chars
 
         result: list[Chunk] = []
         for c in chunks:
@@ -1206,6 +1224,22 @@ class HeaderAwareSplitter:
                     result.append(placeholder)
                     pidx += 1
                     continue
+
+            # HTML Table (O-RAN): <table> 到 </table>
+            if HTML_TABLE_START.match(stripped):
+                start_i = i
+                i += 1
+                while i < n:
+                    if '</table>' in lines[i].lower():
+                        i += 1
+                        break
+                    i += 1
+                table_text = '\n'.join(lines[start_i:i])
+                placeholder = f'__HTMLTABLE_{pidx}__'
+                pmap[placeholder] = table_text
+                result.append(placeholder)
+                pidx += 1
+                continue
 
             result.append(lines[i])
             i += 1
