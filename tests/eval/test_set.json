@@ -4,279 +4,422 @@
     "expected_specs": ["38.211"],
     "expected_sections": ["6.3.3"],
     "difficulty": "easy",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.211": ["6.3.3"]
+    }
   },
   {
     "question": "NR SSB（SS/PBCH block）的时频资源结构是怎样的？包含哪些信号和信道？",
     "expected_specs": ["38.211", "38.213"],
     "expected_sections": ["7.4.3", "4.1"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.211": ["7.4.3"],
+      "38.213": ["4.1"]
+    }
   },
   {
     "question": "NR 中 PDSCH 的 DMRS 有哪两种类型？Type 1 和 Type 2 的配置方式与最大端口数有何区别？",
     "expected_specs": ["38.211"],
     "expected_sections": ["7.4.1.1"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.211": ["7.4.1.1"]
+    }
   },
   {
     "question": "NR 信道编码中，LDPC 码和 Polar 码分别用于哪些物理信道？",
     "expected_specs": ["38.212"],
     "expected_sections": ["5.3"],
     "difficulty": "easy",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.212": ["5.3"]
+    }
   },
   {
     "question": "NR PUSCH 的 DMRS 配置方式有哪些？Type 1 和 Type 2 的差异与应用场景？",
     "expected_specs": ["38.211", "38.214"],
     "expected_sections": ["6.4.1", "6.1"],
     "difficulty": "easy",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.211": ["6.4.1"],
+      "38.214": ["6.1"]
+    }
   },
   {
     "question": "NR 下行控制信道 PDCCH 的 CORESET 和搜索空间（search space）如何配置？两者的关系是什么？",
     "expected_specs": ["38.213", "38.211"],
     "expected_sections": ["10.1", "7.3.2"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.213": ["10.1"],
+      "38.211": ["7.3.2"]
+    }
   },
   {
     "question": "NR 中 UCI 在 PUSCH 上传输时的复用规则是什么？beta_offset 如何决定 UCI 占用的资源？",
     "expected_specs": ["38.213"],
     "expected_sections": ["9.3"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.213": ["9.3"]
+    }
   },
   {
     "question": "NR 上行功率控制中，PUSCH 的发射功率由哪些参数决定（P0、alpha、pathloss、闭环功率调整）？",
     "expected_specs": ["38.213"],
     "expected_sections": ["7.1"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.213": ["7.1"]
+    }
   },
   {
     "question": "NR 速率匹配中，PDSCH/PUSCH 如何避开 SSB、CSI-RS 和 DMRS 占用的资源？",
     "expected_specs": ["38.212"],
     "expected_sections": ["5.4"],
     "difficulty": "hard",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.212": ["5.4"]
+    }
   },
   {
     "question": "NR HARQ-ACK codebook 有哪两种类型？Type-1（半静态）和 Type-2（动态）如何确定反馈比特数？",
     "expected_specs": ["38.213"],
     "expected_sections": ["9.1"],
     "difficulty": "hard",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.213": ["9.1"]
+    }
   },
   {
     "question": "NR 小区搜索中，UE 如何通过 PSS/SSS 确定物理小区 ID（N_ID）？",
     "expected_specs": ["38.213"],
     "expected_sections": ["4.1"],
     "difficulty": "easy",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.213": ["4.1"]
+    }
   },
   {
     "question": "NR 中 SRS 资源集和 SRS 资源的配置关系是什么？不同用途（码本/非码本/波束管理/定位）如何区分？",
     "expected_specs": ["38.214", "38.331"],
-    "expected_sections": ["6.2"],
+    "expected_sections": ["6.2", "6.3.2"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.214": ["6.2"],
+      "38.331": ["6.3.2"]
+    }
   },
   {
     "question": "NR 载波聚合中 SCell 的激活与去激活流程，MAC CE 与 PHY 层定时如何配合？",
     "expected_specs": ["38.321", "38.213"],
     "expected_sections": ["5.9", "4.3"],
     "difficulty": "hard",
-    "multi_hop": true
+    "multi_hop": true,
+    "expected": {
+      "38.321": ["5.9"],
+      "38.213": ["4.3"]
+    }
   },
   {
     "question": "NR MAC 层的逻辑信道优先级（LCP）处理流程是怎样的？PBR 和 BSD 参数如何工作？",
     "expected_specs": ["38.321"],
     "expected_sections": ["5.4.3"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.321": ["5.4.3"]
+    }
   },
   {
     "question": "NR MAC 层的 DRX 机制：长 DRX cycle 和短 DRX cycle 如何配合？相关 timer 有哪些？",
     "expected_specs": ["38.321"],
     "expected_sections": ["5.7"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.321": ["5.7"]
+    }
   },
   {
     "question": "NR MAC 层维护上行时间对齐（TAT timer 与 TA command）的机制？超时后 UE 如何处理？",
     "expected_specs": ["38.321"],
     "expected_sections": ["5.2"],
     "difficulty": "easy",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.321": ["5.2"]
+    }
   },
   {
     "question": "NR RLC 层有哪三种传输模式（TM/UM/AM）？各自的特点和适用场景？",
     "expected_specs": ["38.322"],
     "expected_sections": ["4.2"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.322": ["4.2"]
+    }
   },
   {
     "question": "NR PDCP 层的安全保护机制：加密（ciphering）和完整性保护（integrity protection）分别在什么场景使用？",
     "expected_specs": ["38.323"],
-    "expected_sections": ["5.8", "5.9"],
+    "expected_sections": ["5.8"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.323": ["5.8"]
+    }
   },
   {
     "question": "NR 中逻辑信道到传输信道的映射关系是什么？",
     "expected_specs": ["38.321"],
-    "expected_sections": ["4.5"],
+    "expected_sections": ["4.4"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.321": ["4.4"]
+    }
   },
   {
     "question": "NR PDCP 层的重排序和重复检测机制如何工作？",
     "expected_specs": ["38.323"],
-    "expected_sections": ["5.1", "5.2"],
+    "expected_sections": ["5.1"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.323": ["5.1"]
+    }
   },
   {
     "question": "NR 波束失败恢复的完整流程：PHY 层如何检测波束失败，MAC 层如何通过 MAC CE 上报，RRC 如何配置候选波束？",
     "expected_specs": ["38.213", "38.321", "38.331"],
-    "expected_sections": ["6", "5.17"],
+    "expected_sections": ["6", "5.17", "6.3.2"],
     "difficulty": "hard",
-    "multi_hop": true
+    "multi_hop": true,
+    "expected": {
+      "38.213": ["6"],
+      "38.321": ["5.17"],
+      "38.331": ["6.3.2"]
+    }
   },
   {
     "question": "NR HARQ 过程：PHY 层的 HARQ-ACK 反馈如何映射到 MAC 层的 HARQ process（HARQ process ID 与定时）？",
     "expected_specs": ["38.213", "38.321"],
-    "expected_sections": ["9", "5.3"],
+    "expected_sections": ["9.1", "5.3"],
     "difficulty": "hard",
-    "multi_hop": true
+    "multi_hop": true,
+    "expected": {
+      "38.213": ["9.1"],
+      "38.321": ["5.3"]
+    }
   },
   {
     "question": "NR BWP（带宽部分）的配置（RRC）与切换（PHY/MAC）如何协同工作？BWP 切换的触发方式有哪些？",
     "expected_specs": ["38.213", "38.331", "38.321"],
-    "expected_sections": ["12"],
+    "expected_sections": ["12", "6.3.2", "5.15"],
     "difficulty": "hard",
-    "multi_hop": true
+    "multi_hop": true,
+    "expected": {
+      "38.213": ["12"],
+      "38.331": ["6.3.2"],
+      "38.321": ["5.15"]
+    }
   },
   {
     "question": "NR TCI 状态的激活（MAC CE）与指示（DCI）如何关联波束切换？",
     "expected_specs": ["38.214", "38.321", "38.331"],
-    "expected_sections": ["5.1"],
+    "expected_sections": ["5.1", "5.10", "6.3.2"],
     "difficulty": "hard",
-    "multi_hop": true
+    "multi_hop": true,
+    "expected": {
+      "38.214": ["5.1"],
+      "38.321": ["5.10"],
+      "38.331": ["6.3.2"]
+    }
   },
   {
     "question": "NR 随机接入：PRACH preamble（PHY 层格式与资源）如何触发 MAC 层的随机接入过程（4-step 与 2-step）？",
     "expected_specs": ["38.211", "38.321"],
     "expected_sections": ["6.3.3", "5.1"],
     "difficulty": "hard",
-    "multi_hop": true
+    "multi_hop": true,
+    "expected": {
+      "38.211": ["6.3.3"],
+      "38.321": ["5.1"]
+    }
   },
   {
     "question": "NR 中 4-step RACH 与 2-step RACH 的流程对比：各自的消息和适用场景？",
     "expected_specs": ["38.213", "38.321"],
     "expected_sections": ["8", "5.1"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.213": ["8"],
+      "38.321": ["5.1"]
+    }
   },
   {
     "question": "NR 中 CBG（码块组）重传的配置与操作：CBG 如何划分，HARQ-ACK 如何按 CBG 反馈？",
     "expected_specs": ["38.213", "38.214"],
-    "expected_sections": ["9.1"],
+    "expected_sections": ["9.1", "5.3"],
     "difficulty": "hard",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.213": ["9.1"],
+      "38.214": ["5.3"]
+    }
   },
   {
     "question": "NR SPS（半持续调度）的配置（RRC）与激活（DCI/MAC CE）流程？",
     "expected_specs": ["38.321", "38.331"],
-    "expected_sections": ["5.8"],
+    "expected_sections": ["5.8", "6.3.2"],
     "difficulty": "medium",
-    "multi_hop": true
+    "multi_hop": true,
+    "expected": {
+      "38.321": ["5.8"],
+      "38.331": ["6.3.2"]
+    }
   },
   {
     "question": "NR RRC 状态（RRC_IDLE / RRC_INACTIVE / RRC_CONNECTED）之间的转移条件和触发方式？",
     "expected_specs": ["38.331", "38.300"],
     "expected_sections": ["4.2"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.331": ["4.2"],
+      "38.300": ["4.2"]
+    }
   },
   {
     "question": "NR 测量配置：measurement object、reporting configuration 和 measurement gap 各起什么作用？",
     "expected_specs": ["38.331"],
     "expected_sections": ["5.5"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.331": ["5.5"]
+    }
   },
   {
     "question": "NR MAC 与 LTE MAC 在 HARQ 进程数量和调度机制上的主要区别？",
     "expected_specs": ["38.321", "36.321"],
     "expected_sections": ["5.3"],
     "difficulty": "hard",
-    "multi_hop": true
+    "multi_hop": true,
+    "expected": {
+      "38.321": ["5.3"],
+      "36.321": ["5.3"]
+    }
   },
   {
     "question": "NR RRC 与 LTE RRC 在系统信息（MIB/SIB）广播机制上的区别？",
     "expected_specs": ["38.331", "36.331"],
     "expected_sections": ["5.2"],
     "difficulty": "hard",
-    "multi_hop": true
+    "multi_hop": true,
+    "expected": {
+      "38.331": ["5.2"],
+      "36.331": ["5.2"]
+    }
   },
   {
     "question": "NR 中 PDCCH 的 DCI 格式有哪些？各 DCI 格式用于调度哪些信道？",
     "expected_specs": ["38.212"],
     "expected_sections": ["7.3"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.212": ["7.3"]
+    }
   },
   {
     "question": "NR PDSCH/PUSCH 的处理时间（processing time）与 HARQ 定时关系？",
     "expected_specs": ["38.214"],
     "expected_sections": ["5.3", "6.4"],
     "difficulty": "hard",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.214": ["5.3", "6.4"]
+    }
   },
   {
     "question": "NR 中 CSI-RS 的资源配置包含哪些参数？CSI-RS 有哪些用途（波束管理/CSI 获取/移动性）？",
     "expected_specs": ["38.211", "38.214"],
     "expected_sections": ["7.4.1.5", "5.2"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.211": ["7.4.1.5"],
+      "38.214": ["5.2"]
+    }
   },
   {
     "question": "NR 中 PTRS（相位跟踪参考信号）的配置目的和资源映射方式？",
     "expected_specs": ["38.211", "38.214"],
-    "expected_sections": ["7.4.1.2"],
+    "expected_sections": ["7.4.1.2", "5.1"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.211": ["7.4.1.2"],
+      "38.214": ["5.1"]
+    }
   },
   {
     "question": "NR 上行控制信息（UCI）包含哪些类型（HARQ-ACK/SR/CSI）？在 PUCCH 上如何传输？",
     "expected_specs": ["38.213"],
     "expected_sections": ["9.2"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.213": ["9.2"]
+    }
   },
   {
     "question": "NR 中下行预编码的码本类型（Type I / Type II）及其适用场景？",
     "expected_specs": ["38.214"],
     "expected_sections": ["5.2"],
     "difficulty": "hard",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.214": ["5.2"]
+    }
   },
   {
     "question": "NR 中双连接（EN-DC）下 MCG 与 SCG 的承载类型有哪些？PDCP 层如何区分？",
     "expected_specs": ["38.323", "38.331"],
-    "expected_sections": ["4.2", "4.2"],
+    "expected_sections": ["4.2"],
     "difficulty": "hard",
-    "multi_hop": true
+    "multi_hop": true,
+    "expected": {
+      "38.323": ["4.2"],
+      "38.331": ["4.2"]
+    }
   },
   {
     "question": "NR 中 PUCCH 格式有哪些？各格式的时域长度和承载 UCI 的能力？",
     "expected_specs": ["38.211", "38.213"],
     "expected_sections": ["6.3.2", "9.2"],
     "difficulty": "medium",
-    "multi_hop": false
+    "multi_hop": false,
+    "expected": {
+      "38.211": ["6.3.2"],
+      "38.213": ["9.2"]
+    }
   }
 ]

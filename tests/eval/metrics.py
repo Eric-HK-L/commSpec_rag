@@ -12,6 +12,7 @@ class EvalSample:
     question: str
     expected_specs: list[str]          # 预期涉及的规范编号, e.g. ["38.300", "38.211"]
     expected_sections: list[str]        # 预期涉及的章节, e.g. ["5.2.1", "6.3"]
+    expected: dict[str, list[str]] | None = None  # spec→[章节] 精确对应 (章节级召回优先用)
     difficulty: str = "medium"          # easy / medium / hard
     multi_hop: bool = False             # 是否需要跨规范检索
 
@@ -77,16 +78,22 @@ def section_recall_at_k(
     expected_specs: list[str],
     expected_sections: list[str],
     k: int,
+    expected: dict[str, list[str]] | None = None,
 ) -> float:
-    """章节级 Recall@K: 命中需 spec 匹配 expected_specs 且 section 前缀匹配 expected_sections.
+    """章节级 Recall@K: 命中需 spec 匹配 expected_specs 且 section 前缀匹配.
 
-    retrieved_pairs: [(spec_number, section_number), ...]. section 前缀匹配:
-    expected "6.3.3" 命中 retrieved "6.3.3" / "6.3.3.1", 不命中 "6.3.2".
-    expected_sections 为空时退化为 spec 级判定。
+    expected (spec→[章节] 精确对应) 优先: 每个 spec 只匹配其对应章节。
+    无 expected 时回退: expected_sections 全局前缀匹配 (不区分 spec)。
+    section 前缀匹配: expected "6.3.3" 命中 retrieved "6.3.3" / "6.3.3.1"。
     """
     if not expected_specs:
         return 1.0
     exp_specs = {s.lower() for s in expected_specs}
+    if expected:
+        expected_map = {s.lower(): [x.lower().lstrip("§") for x in secs if x.strip()]
+                        for s, secs in expected.items()}
+    else:
+        expected_map = None
     exp_sections = [s.lower().lstrip("§") for s in expected_sections if s and s.strip()]
     matched_specs: set[str] = set()
     for spec, section in retrieved_pairs[:k]:
@@ -94,7 +101,11 @@ def section_recall_at_k(
         if spec_l not in exp_specs:
             continue
         sec = (section or "").lower().lstrip("§")
-        if not exp_sections or any(sec.startswith(es) for es in exp_sections):
+        if expected_map:
+            exp_secs = expected_map.get(spec_l)
+            if exp_secs and any(sec.startswith(es) for es in exp_secs):
+                matched_specs.add(spec_l)
+        elif not exp_sections or any(sec.startswith(es) for es in exp_sections):
             matched_specs.add(spec_l)
     return len(matched_specs) / len(exp_specs)
 
@@ -152,9 +163,9 @@ def evaluate_one(
             20: recall_at_k(retrieved_specs, sample.expected_specs, 20),
         },
         section_recall_at_k={
-            5: section_recall_at_k(pairs, sample.expected_specs, sample.expected_sections, 5),
-            10: section_recall_at_k(pairs, sample.expected_specs, sample.expected_sections, 10),
-            20: section_recall_at_k(pairs, sample.expected_specs, sample.expected_sections, 20),
+            5: section_recall_at_k(pairs, sample.expected_specs, sample.expected_sections, 5, sample.expected),
+            10: section_recall_at_k(pairs, sample.expected_specs, sample.expected_sections, 10, sample.expected),
+            20: section_recall_at_k(pairs, sample.expected_specs, sample.expected_sections, 20, sample.expected),
         },
         reciprocal_rank=reciprocal_rank(ranks),
         ndcg_at_10=ndcg_at_k(retrieved_specs, sample.expected_specs, 10),

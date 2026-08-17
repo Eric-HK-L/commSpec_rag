@@ -38,6 +38,7 @@ def load_test_set(path: str) -> list[EvalSample]:
             question=item["question"],
             expected_specs=item.get("expected_specs", []),
             expected_sections=item.get("expected_sections", []),
+            expected=item.get("expected"),
             difficulty=item.get("difficulty", "medium"),
             multi_hop=item.get("multi_hop", False),
         ))
